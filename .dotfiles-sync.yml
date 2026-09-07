@@ -1,0 +1,29 @@
+# .dotfiles-sync.yml — workbench-containers
+#
+# Ecosystem module (workbench-core ARCHITECTURE.md §2/§3): Docker/Podman/
+# Kubernetes aliases and installers. Meaningless standalone — depends on
+# workbench-core's loader and Core API.
+#
+# See contracts/manifest-spec.md (in workbench-core) for the full field
+# reference.
+version: 1
+branch: main
+
+core_api: ">=1.1 <2.0"
+sync:
+  enabled: true
+
+register:
+  shell:
+    - src: shell/containers.sh
+      tier: tools
+    - src: shell/kubernetes.sh
+      tier: tools
+    - src: shell/completions/kubernetes.sh
+      tier: tools
+  installers:
+    - src: shell/installers.sh
+  getters:
+    - name: containers
+      function: get-containers-functions
+      label: "Docker/Podman/Kubernetes helpers"
