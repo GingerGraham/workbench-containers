@@ -7,7 +7,7 @@ All notable changes to `workbench-containers` are documented here.
 ### Added
 
 - Added `installed-helm` — reports install status to `wb tools upgrade`/
-  `list --status` (workbench-core §12 D43).
+  `wb tools list --status` (workbench-core §12 D43).
 
 ## [0.1.0] - 2026-09-09
 
