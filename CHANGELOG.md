@@ -8,6 +8,8 @@ All notable changes to `workbench-containers` are documented here.
 
 ### Added
 
+- Added `installed-helm` — reports install status to `wb tools upgrade`/
+  `list --status` (workbench-core §12 D43).
 - Initial decomposition from `workbench-precursor` (Wave C): Docker/Podman
   aliases, `k`/`kube-version`/`set-kubectl`, kubectl shell completions, and
   `install-helm`, split out of the precursor's grab-bag `installers-iac.sh`
