@@ -41,6 +41,7 @@ if [[ -n "${_kc_version}" ]]; then
 fi
 
 # bash only: make completions work for the 'k' alias
+# shellcheck disable=SC2015
 [[ -n "${BASH_VERSION}" ]] && complete -o default -F __start_kubectl k 2>/dev/null || true
 
 unset _kc_cache_dir _kc_version _kc_cache
