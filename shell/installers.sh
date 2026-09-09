@@ -55,3 +55,7 @@ install-helm() {
         *)     log_error "Unsupported OS for helm install"; return 1 ;;
     esac
 }
+
+installed-helm() {
+    command -v helm &>/dev/null
+}
