@@ -4,6 +4,8 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-16
+
 ### Fixed
 
 - **Docker/Podman alias listings gated on tool availability** —
