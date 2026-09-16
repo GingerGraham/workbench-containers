@@ -4,6 +4,21 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Docker/Podman alias listings gated on tool availability** —
+  `get-containers-functions` (and `wb functions`) no longer list the
+  `d`/`dps`/`dpsa`/`di`/`drm`/`drmi`/`dex`/`dlog` docker aliases or the
+  `pd`/`pdps`/`pdpsa`/`pdi` podman aliases on a host missing the
+  corresponding tool — each set is only ever defined inside its own
+  `command -v` guard in `shell/containers.sh`, but the listing's
+  static-grep view couldn't see that runtime guard until now. Declared
+  via `_wb_declare_availability` (`workbench-core`'s
+  `docs/module-authoring.md` "Declaring function availability" once
+  that PR lands). The docker-vs-podman backend-selection aliases
+  (`docker` shim, `dc` compose) are unaffected — they already work
+  with either tool.
+
 ### Added
 
 - **Agent-instruction files** (`AGENTS.md`, `CLAUDE.md`,
