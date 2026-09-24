@@ -18,6 +18,19 @@ All notable changes to `workbench-containers` are documented here.
   No longer `cd`s the caller's interactive shell. `install-helm`'s latest-version
   lookup now fails loudly (`curl -fsS`) instead of silently on an HTTP error.
   Requires `workbench.yml`'s `core_api` floor raised to `>=1.4 <2.0`.
+- **`set-kubectl` fails on HTTP errors and verifies its download** (security
+  review M3). Previously downloaded with `curl -sSL` and no `--fail`, so a
+  404/5xx error body was saved as `kubectl` and made executable — and once
+  saved, the `[[ ! -f ]]` guard meant it was never replaced on a later
+  attempt. Now downloads via workbench-core's `_wb_fetch_verified`
+  (`CORE_API_VERSION` 1.4), verified against `dl.k8s.io`'s published
+  `.sha256`, and refuses to leave a non-executable file in place. Also adds
+  a sanity check (`kubectl version --client`) after download, removing the
+  file and asking the user to re-run if it fails — this catches a bad file
+  left behind by the pre-fix version on an existing host, which the
+  existing executable-bit check alone can't detect. The "latest" lookup
+  moves off the legacy `storage.googleapis.com/kubernetes-release` bucket
+  to `dl.k8s.io` and now fails loudly on an HTTP error instead of silently.
 
 ## [0.3.0] - 2026-09-23
 
