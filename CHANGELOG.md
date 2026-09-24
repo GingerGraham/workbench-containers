@@ -18,6 +18,11 @@ All notable changes to `workbench-containers` are documented here.
   No longer `cd`s the caller's interactive shell. `install-helm`'s latest-version
   lookup now fails loudly (`curl -fsS`) instead of silently on an HTTP error.
   Requires `workbench.yml`'s `core_api` floor raised to `>=1.4 <2.0`.
+  `install-helm`'s latest-version lookup now checks `curl`'s own exit
+  status directly (rather than a `curl | grep | sed` pipeline's last-command
+  status, which stayed 0 even when `curl` failed), and `_helm-install-linux`
+  now checks the `install`/`ln` steps instead of reporting success
+  regardless of whether the binary actually landed.
 - **`set-kubectl` fails on HTTP errors and verifies its download** (security
   review M3). Previously downloaded with `curl -sSL` and no `--fail`, so a
   404/5xx error body was saved as `kubectl` and made executable — and once

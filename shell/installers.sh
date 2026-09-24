@@ -37,9 +37,11 @@ _helm-install-linux() {
         || { log_error "helm: binary not found in ${asset}"; rm -rf "${tmp_dir}"; return 1; }
 
     mkdir -p "${helm_dir}"
-    install -m 755 "${tmp_dir}/linux-${arch}/helm" "${helm_dir}/helm"
+    install -m 755 "${tmp_dir}/linux-${arch}/helm" "${helm_dir}/helm" \
+        || { log_error "helm: failed to install binary into ${helm_dir}"; rm -rf "${tmp_dir}"; return 1; }
     rm -rf "${tmp_dir}"
-    ln -sf "${helm_dir}/helm" "${HOME}/.local/bin/helm"
+    ln -sf "${helm_dir}/helm" "${HOME}/.local/bin/helm" \
+        || { log_error "helm: failed to symlink helm into ${HOME}/.local/bin"; return 1; }
 
     if [[ -x /usr/local/bin/helm ]]; then
         log_warn "helm: an older root-installed /usr/local/bin/helm exists (from the previous install method). Remove it with: sudo rm /usr/local/bin/helm"
@@ -58,9 +60,10 @@ _helm-install-mac() {
 
 install-helm() {
     local helm_version
-    helm_version="$(curl -fsS https://api.github.com/repos/helm/helm/releases/latest \
-        | grep '"tag_name":' | sed -E 's/.+"v([^"]+)".+/\1/')" \
+    local latest_json
+    latest_json="$(curl -fsS https://api.github.com/repos/helm/helm/releases/latest)" \
         || { log_error "Could not query the latest helm release"; return 1; }
+    helm_version="$(echo "${latest_json}" | grep '"tag_name":' | sed -E 's/.+"v([^"]+)".+/\1/')"
     [[ -z "${helm_version}" ]] && { log_error "Could not determine helm version"; return 1; }
 
     if command -v helm &>/dev/null; then
