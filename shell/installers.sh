@@ -12,19 +12,38 @@
 # (contracts/core-api.md), replacing the precursor's DOTFILES_OS.
 
 _helm-install-linux() {
-    local helm_version="$1"
+    local helm_version="$1" arch asset url tmp_dir
+    case "${WORKBENCH_ARCH}" in
+        x86_64|amd64)  arch="amd64" ;;
+        aarch64|arm64) arch="arm64" ;;
+        *) log_error "helm: unsupported architecture ${WORKBENCH_ARCH}"; return 1 ;;
+    esac
+
+    # Official release tarball, verified against its published .sha256sum —
+    # replaces get-helm-3 from helm's main branch, which skipped verification
+    # when openssl was missing (security review M3). User-level install; no
+    # sudo, no cd in the caller's shell.
+    asset="helm-v${helm_version}-linux-${arch}.tar.gz"
+    url="https://get.helm.sh/${asset}"
     local helm_dir="${HOME}/.local/bin/k8s/helm-${helm_version}"
-    mkdir -p "${helm_dir}"
-    cd "${helm_dir}" || return 1
-    command -v openssl &>/dev/null || { VERIFY_CHECKSUM=false; export VERIFY_CHECKSUM; }
+
     log_info "Installing helm ${helm_version}..."
-    curl -fsSL "https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3" -o get_helm.sh
-    [[ -f get_helm.sh ]] || { log_error "Failed to download helm install script"; cd - || true; return 1; }
-    chmod 700 get_helm.sh
-    ./get_helm.sh
-    unset VERIFY_CHECKSUM
-    rm -f get_helm.sh
-    cd - || true
+    tmp_dir="$(mktemp -d)" || return 1
+    _wb_fetch_verified "${url}" "${tmp_dir}/${asset}" "hashfile:${url}.sha256sum" \
+        || { rm -rf "${tmp_dir}"; return 1; }
+    tar -xzf "${tmp_dir}/${asset}" -C "${tmp_dir}" \
+        || { log_error "helm: failed to extract ${asset}"; rm -rf "${tmp_dir}"; return 1; }
+    [[ -f "${tmp_dir}/linux-${arch}/helm" ]] \
+        || { log_error "helm: binary not found in ${asset}"; rm -rf "${tmp_dir}"; return 1; }
+
+    mkdir -p "${helm_dir}"
+    install -m 755 "${tmp_dir}/linux-${arch}/helm" "${helm_dir}/helm"
+    rm -rf "${tmp_dir}"
+    ln -sf "${helm_dir}/helm" "${HOME}/.local/bin/helm"
+
+    if [[ -x /usr/local/bin/helm ]]; then
+        log_warn "helm: an older root-installed /usr/local/bin/helm exists (from the previous install method). Remove it with: sudo rm /usr/local/bin/helm"
+    fi
     command -v helm &>/dev/null && log_info "Helm ${helm_version} installed"
 }
 
@@ -39,8 +58,9 @@ _helm-install-mac() {
 
 install-helm() {
     local helm_version
-    helm_version="$(curl -s https://api.github.com/repos/helm/helm/releases/latest \
-        | grep '"tag_name":' | sed -E 's/.+"v([^"]+)".+/\1/')"
+    helm_version="$(curl -fsS https://api.github.com/repos/helm/helm/releases/latest \
+        | grep '"tag_name":' | sed -E 's/.+"v([^"]+)".+/\1/')" \
+        || { log_error "Could not query the latest helm release"; return 1; }
     [[ -z "${helm_version}" ]] && { log_error "Could not determine helm version"; return 1; }
 
     if command -v helm &>/dev/null; then

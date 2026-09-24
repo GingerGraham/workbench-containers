@@ -4,6 +4,21 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Helm installed from a verified release tarball, not `get-helm-3` from
+  helm's `main` branch** (security review M3). `_helm-install-linux` now
+  downloads `get.helm.sh`'s official `helm-v<version>-linux-<arch>.tar.gz`
+  and verifies it against the published `.sha256sum` via workbench-core's
+  `_wb_fetch_verified` (`CORE_API_VERSION` 1.4) before installing — refusing
+  to proceed on a hash mismatch, rather than silently skipping verification
+  when `openssl` was missing. Installs the requested version into
+  `~/.local/bin/k8s/helm-<version>` (previously `/usr/local/bin` via `sudo`,
+  and the wrong version — the old script ignored the version it was given).
+  No longer `cd`s the caller's interactive shell. `install-helm`'s latest-version
+  lookup now fails loudly (`curl -fsS`) instead of silently on an HTTP error.
+  Requires `workbench.yml`'s `core_api` floor raised to `>=1.4 <2.0`.
+
 ## [0.3.0] - 2026-09-23
 
 ### Added
