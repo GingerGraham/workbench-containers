@@ -24,7 +24,8 @@ set-kubectl() {
 
     if [[ "${USE_LATEST}" == "true" ]]; then
         log_info "Fetching latest stable kubectl version..."
-        KUBECTL_VERSION="$(curl -s https://storage.googleapis.com/kubernetes-release/release/stable.txt)"
+        KUBECTL_VERSION="$(curl -fsS https://dl.k8s.io/release/stable.txt)" \
+            || { log_error "set-kubectl: could not fetch the latest stable version"; return 1; }
         KUBECTL_VERSION="${KUBECTL_VERSION#v}"
         log_info "Latest kubectl: ${KUBECTL_VERSION}"
     fi
@@ -71,12 +72,25 @@ set-kubectl() {
 
     if [[ ! -f "${kubectl_dir}/kubectl" ]]; then
         log_info "Downloading kubectl ${KUBECTL_VERSION}..."
-        curl -sSL "${kubectl_url}" -o "${kubectl_dir}/kubectl"
+        # Verified against dl.k8s.io's published .sha256; nothing is written
+        # to kubectl_dir unless it matches (security review M3).
+        if ! _wb_fetch_verified "${kubectl_url}" "${kubectl_dir}/kubectl" "hashfile:${kubectl_url}.sha256"; then
+            log_error "kubectl download or verification failed"
+            return 1
+        fi
         chmod +x "${kubectl_dir}/kubectl"
     fi
 
     if [[ ! -x "${kubectl_dir}/kubectl" ]]; then
         log_error "kubectl download failed"; return 1
+    fi
+
+    # A prior failed download may have left an HTML error page in place of
+    # the binary — the -x check above won't catch that, so confirm it runs.
+    if ! "${kubectl_dir}/kubectl" version --client &>/dev/null; then
+        log_error "kubectl ${KUBECTL_VERSION} failed to run after download — removing it, please re-run"
+        rm -f "${kubectl_dir}/kubectl"
+        return 1
     fi
 
     # Replace current symlink or binary

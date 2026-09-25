@@ -4,6 +4,39 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Helm installed from a verified release tarball, not `get-helm-3` from
+  helm's `main` branch** (security review M3). `_helm-install-linux` now
+  downloads `get.helm.sh`'s official `helm-v<version>-linux-<arch>.tar.gz`
+  and verifies it against the published `.sha256sum` via workbench-core's
+  `_wb_fetch_verified` (`CORE_API_VERSION` 1.4) before installing — refusing
+  to proceed on a hash mismatch, rather than silently skipping verification
+  when `openssl` was missing. Installs the requested version into
+  `~/.local/bin/k8s/helm-<version>` (previously `/usr/local/bin` via `sudo`,
+  and the wrong version — the old script ignored the version it was given).
+  No longer `cd`s the caller's interactive shell. `install-helm`'s latest-version
+  lookup now fails loudly (`curl -fsS`) instead of silently on an HTTP error.
+  Requires `workbench.yml`'s `core_api` floor raised to `>=1.4 <2.0`.
+  `install-helm`'s latest-version lookup now checks `curl`'s own exit
+  status directly (rather than a `curl | grep | sed` pipeline's last-command
+  status, which stayed 0 even when `curl` failed), and `_helm-install-linux`
+  now checks the `install`/`ln` steps instead of reporting success
+  regardless of whether the binary actually landed.
+- **`set-kubectl` fails on HTTP errors and verifies its download** (security
+  review M3). Previously downloaded with `curl -sSL` and no `--fail`, so a
+  404/5xx error body was saved as `kubectl` and made executable — and once
+  saved, the `[[ ! -f ]]` guard meant it was never replaced on a later
+  attempt. Now downloads via workbench-core's `_wb_fetch_verified`
+  (`CORE_API_VERSION` 1.4), verified against `dl.k8s.io`'s published
+  `.sha256`, and refuses to leave a non-executable file in place. Also adds
+  a sanity check (`kubectl version --client`) after download, removing the
+  file and asking the user to re-run if it fails — this catches a bad file
+  left behind by the pre-fix version on an existing host, which the
+  existing executable-bit check alone can't detect. The "latest" lookup
+  moves off the legacy `storage.googleapis.com/kubernetes-release` bucket
+  to `dl.k8s.io` and now fails loudly on an HTTP error instead of silently.
+
 ## [0.3.0] - 2026-09-23
 
 ### Added
