@@ -4,6 +4,8 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-09-25
+
 ### Fixed
 
 - **Helm installed from a verified release tarball, not `get-helm-3` from
