@@ -4,6 +4,19 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`get-containers-functions` lists names in zsh.** The hand-written getter
+  read `${BASH_SOURCE[0]}` inside the function, which zsh doesn't set, so in
+  zsh it printed `(none)`. It is deleted; workbench-core now generates the
+  getter from `register.getters[]` (core D89), reading the module's
+  registered files in bash and zsh alike. The listing's headers now read
+  `Docker/Podman/Kubernetes helpers — functions:` / `— aliases:` (the
+  manifest label), and the getter no longer lists itself. `workbench.yml`'s
+  `core_api` floor rises to `>=1.8 <2.0`.
+- README: `install-helm` is run with `wb tools install helm` (or
+  `wb tools upgrade helm`), not the removed `wb tools update`.
+
 ## [0.3.1] - 2026-09-25
 
 ### Fixed

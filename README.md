@@ -18,7 +18,7 @@ wb add containers
 - `k` (kubectl), `kube-version`, and `set-kubectl` for pinning a specific
   kubectl release.
 - kubectl shell completions (version-stamped cache).
-- `install-helm` — via `wb tools update`.
+- `install-helm` — via `wb tools install helm` (and `wb tools upgrade helm`).
 
 ## Requires
 

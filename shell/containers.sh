@@ -20,8 +20,8 @@ if command -v docker &>/dev/null; then
 fi
 
 # The docker-prefixed aliases above are only ever defined once the
-# `command -v docker` guard has passed, but get-containers-functions'
-# static-grep listing can't see that runtime guard, so without this it
+# `command -v docker` guard has passed, but the getter's static-grep
+# listing (core-generated, workbench-core D89) can't see that runtime guard, so without this it
 # would list them even on hosts without docker. Declare their
 # availability predicates so the listing matches reality. This is
 # unrelated to the docker-vs-podman backend selection below, which
@@ -47,9 +47,3 @@ fi
 if command -v docker-compose &>/dev/null || command -v podman-compose &>/dev/null; then
     alias dc='${DOCKER_COMPOSE_CMD:-docker-compose}'
 fi
-
-get-containers-functions() {
-    local _dir; _dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    _get_functions_in "Container/Kubernetes functions" "" "${_dir}/containers.sh" "${_dir}/kubernetes.sh"
-    _get_aliases_in "Container/Kubernetes aliases" "" "${_dir}/containers.sh" "${_dir}/kubernetes.sh"
-}
