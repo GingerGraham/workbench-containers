@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shell/completions/kubernetes.sh — workbench-containers
 # kubectl shell completions — version-stamped cache, no API calls at startup.
-# Registered at tier: tools (.dotfiles-sync.yml), sourced unconditionally.
+# Registered at tier: tools (workbench.yml), sourced unconditionally.
 # Ported from workbench-precursor's completions/kubernetes.sh —
 # WORKBENCH_SHELL replaces DOTFILES_SHELL.
 
