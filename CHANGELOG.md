@@ -21,6 +21,11 @@ All notable changes to `workbench-containers` are documented here.
 
 ### Fixed
 
+- **zsh with kubectl installed no longer prints `command not found:
+  compdef` at start.** The cached kubectl completion is sourced only after
+  zsh's completion system is initialised, with the same guard
+  workbench-core uses for `wb`'s own completions.
+
 - **The Docker aliases need a real `docker` binary.** On a podman-only host,
   this module's own `docker=podman` alias made `command -v docker` true in
   zsh (and interactive bash), so `d`, `dps`, `dpsa`, `di`, `drm`, `drmi`,
