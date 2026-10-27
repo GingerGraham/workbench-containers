@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # shell/kubernetes.sh — workbench-containers
 # Kubernetes tool configuration — aliases and kubectl version management.
-# Registered at tier: tools (.dotfiles-sync.yml), sourced unconditionally.
+# Registered at tier: tools (workbench.yml), sourced unconditionally.
 # Ported from workbench-precursor's tools/kubernetes.sh.
 
 # ── aliases ───────────────────────────────────────────────────────────────────
+_wb_declare_availability kubectl k kube-version
 alias k="kubectl"
 alias kube-version="kubectl version --client --short 2>/dev/null \
     || kubectl version --client | awk '/Client Version:/{print \$NF}' | sed 's/^v//'"
 
 # ── functions ─────────────────────────────────────────────────────────────────
 set-kubectl() {
-    local KUBECTL_VERSION="" USE_LATEST=""
+    local KUBECTL_VERSION="" USE_LATEST="" OPTIND=1 opt
 
     while getopts ":hlsv:" opt; do
         case ${opt} in
@@ -93,17 +94,22 @@ set-kubectl() {
         return 1
     fi
 
-    # Replace current symlink or binary
-    local current_path
-    current_path="$(command -v kubectl 2>/dev/null)"
-    if [[ -n "${current_path}" ]]; then
-        if [[ -L "${current_path}" ]]; then
-            rm "${current_path}"
-        else
-            mv "${current_path}" "${current_path}.old"
-        fi
+    # Point ~/.local/bin/kubectl (on PATH via workbench-core's loader) at
+    # this version. Only that path is replaced: a kubectl elsewhere on PATH
+    # belongs to a package manager (Homebrew's symlink, a distro package)
+    # and is left alone, never removed or renamed.
+    local kubectl_link="${HOME}/.local/bin/kubectl" current_path
+    if [[ -e "${kubectl_link}" && ! -L "${kubectl_link}" ]]; then
+        mv "${kubectl_link}" "${kubectl_link}.old" \
+            || { log_error "set-kubectl: could not move ${kubectl_link} aside"; return 1; }
     fi
+    ln -sfn "${kubectl_dir}/kubectl" "${kubectl_link}" \
+        || { log_error "set-kubectl: could not link ${kubectl_link}"; return 1; }
+    hash -r 2>/dev/null
 
-    ln -s "${kubectl_dir}/kubectl" "${HOME}/.local/bin/kubectl"
+    current_path="$(command -v kubectl 2>/dev/null)"
+    if [[ "${current_path}" != "${kubectl_link}" ]]; then
+        log_warn "set-kubectl: kubectl ${KUBECTL_VERSION} is at ${kubectl_link}, but ${current_path:-nothing} comes first on PATH"
+    fi
     log_info "kubectl ${KUBECTL_VERSION} active"
 }

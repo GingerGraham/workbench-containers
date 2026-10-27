@@ -45,6 +45,21 @@ for key in version core_api register; do
     fi
 done
 
+# Core-generated getters (workbench-core D89) need Core API 1.8.
+if [[ -n "${MANIFEST}" ]] && grep -qE '^core_api:[[:space:]]*">=1\.8 <2\.0"[[:space:]]*$' "${MANIFEST}"; then
+    ok "manifest declares core_api \">=1.8 <2.0\""
+else
+    fail "manifest core_api is not \">=1.8 <2.0\""
+fi
+
+# No hand-written getter: core generates get-containers-functions from
+# register.getters[] (D89), and a module's own definition would win over it.
+if ! grep -rqE '^[[:space:]]*(function[[:space:]]+)?get-[a-z-]+-functions' "${REPO_ROOT}/shell/"; then
+    ok "shell/ defines no get-*-functions getter (core generates it)"
+else
+    fail "shell/ defines a get-*-functions getter; delete it (core generates it, D89)"
+fi
+
 if [[ -n "${MANIFEST}" ]]; then
     while IFS= read -r src; do
         [[ -z "${src}" ]] && continue

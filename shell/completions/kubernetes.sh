@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # shell/completions/kubernetes.sh — workbench-containers
 # kubectl shell completions — version-stamped cache, no API calls at startup.
-# Registered at tier: tools (.dotfiles-sync.yml), sourced unconditionally.
+# Registered at tier: tools (workbench.yml), sourced unconditionally.
 # Ported from workbench-precursor's completions/kubernetes.sh —
 # WORKBENCH_SHELL replaces DOTFILES_SHELL.
 
@@ -36,6 +36,16 @@ if [[ -n "${_kc_version}" ]]; then
         kubectl completion "${WORKBENCH_SHELL}" 2>/dev/null > "${_kc_cache}" \
             || rm -f "${_kc_cache}"
     fi
+
+    # kubectl's zsh script calls compdef, which needs zsh's completion
+    # system initialised first. Same idempotent guard as workbench-core's
+    # shell/completions/wb.sh: -C reuses the existing dump, so this is a
+    # no-op once compinit has run (e.g. from workbench-shell's zsh.sh).
+    if [[ -n "${ZSH_VERSION:-}" ]] && ! command -v compdef &>/dev/null; then
+        autoload -Uz compinit
+        compinit -C
+    fi
+
     # shellcheck disable=SC1090
     [[ -f "${_kc_cache}" ]] && source "${_kc_cache}"
 fi

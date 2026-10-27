@@ -3,10 +3,9 @@
 # install-helm and its per-distro helpers. Ported from
 # workbench-precursor's lazy/installers-iac.sh (the Helm slice — grouped
 # here rather than workbench-iac since Helm operates specifically on
-# Kubernetes clusters, per the module map §3). No installers exist for
-# Docker/Podman/kubectl in the precursor repo (assumed pre-installed or
-# package-managed) — set-kubectl in shell/kubernetes.sh handles kubectl's
-# own version management instead.
+# Kubernetes clusters, per the module map §3), plus install-kubectl, a
+# wrapper over set-kubectl in shell/kubernetes.sh. No installers exist for
+# Docker/Podman (assumed pre-installed or package-managed).
 #
 # WORKBENCH_OS is a workbench-core Core API platform fact
 # (contracts/core-api.md), replacing the precursor's DOTFILES_OS.
@@ -81,4 +80,17 @@ install-helm() {
 
 installed-helm() {
     command -v helm &>/dev/null
+}
+
+# kubectl through wb tools. set-kubectl (shell/kubernetes.sh) does the
+# verified download; this sources it, since wb tools loads only this file.
+_containers_inst_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
+install-kubectl() {
+    # shellcheck source=shell/kubernetes.sh
+    source "${_containers_inst_dir}/kubernetes.sh" || return 1
+    set-kubectl -l
+}
+
+installed-kubectl() {
+    command -v kubectl &>/dev/null
 }
