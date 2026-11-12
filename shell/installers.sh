@@ -84,7 +84,7 @@ installed-helm() {
 
 # kubectl through wb tools. set-kubectl (shell/kubernetes.sh) does the
 # verified download; this sources it, since wb tools loads only this file.
-_containers_inst_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
+_containers_inst_dir="$(builtin cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
 install-kubectl() {
     # shellcheck source=shell/kubernetes.sh
     source "${_containers_inst_dir}/kubernetes.sh" || return 1

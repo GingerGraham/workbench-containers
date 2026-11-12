@@ -4,6 +4,16 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **No more host aliases inside module code (workbench-core D110).**
+  `shell/installers.sh` resolved its own directory with a bare `cd`, so a
+  host `cd` alias or function left the path wrong and `install-kubectl`
+  could not find `kubernetes.sh`; `set-kubectl` moved an existing kubectl
+  aside with a bare `mv`. They are now `builtin cd` and `command mv`. Adds
+  `tests/check-no-bare-cd.sh` and `tests/check-cd-wrapper.sh` to keep it
+  that way.
+
 ### Changed
 
 - **Bug report template asks for OS family and environment separately.**

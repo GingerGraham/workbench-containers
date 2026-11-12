@@ -100,7 +100,7 @@ set-kubectl() {
     # and is left alone, never removed or renamed.
     local kubectl_link="${HOME}/.local/bin/kubectl" current_path
     if [[ -e "${kubectl_link}" && ! -L "${kubectl_link}" ]]; then
-        mv "${kubectl_link}" "${kubectl_link}.old" \
+        command mv "${kubectl_link}" "${kubectl_link}.old" \
             || { log_error "set-kubectl: could not move ${kubectl_link} aside"; return 1; }
     fi
     ln -sfn "${kubectl_dir}/kubectl" "${kubectl_link}" \
