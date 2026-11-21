@@ -7,6 +7,29 @@
 
 _kc_cache_dir="${XDG_CACHE_HOME:-${HOME}/.cache}/workbench/completions"
 
+# zsh only. A plain `compinit` in the user's own .zshrc, run after this
+# file, resets zsh's completion table and drops kubectl's registration
+# (checked with kubectl 1.37 in zsh 5.9: _comps[kubectl] is empty
+# afterwards). This hook runs once, before the first prompt, when every
+# startup file has finished, and registers kubectl again if that happened.
+# It then removes itself. Defined in both shells; only zsh registers it.
+_containers_kubectl_completion_rearm() {
+    local _hook _kept=()
+    for _hook in "${precmd_functions[@]}"; do
+        if [[ "${_hook}" != "_containers_kubectl_completion_rearm" ]]; then
+            _kept+=("${_hook}")
+        fi
+    done
+    precmd_functions=("${_kept[@]}")
+
+    # shellcheck disable=SC2154  # _comps is zsh's completion table
+    if command -v compdef &>/dev/null && [[ -z "${_comps[kubectl]:-}" ]] \
+        && [[ -f "${_CONTAINERS_KUBECTL_COMPLETION:-}" ]]; then
+        # shellcheck disable=SC1090
+        source "${_CONTAINERS_KUBECTL_COMPLETION}"
+    fi
+}
+
 # --client prevents any contact with the API server.
 # Parse the clientVersion.gitVersion field directly from JSON — no jq required.
 _kc_version="$(kubectl version --client -o json 2>/dev/null \
@@ -48,6 +71,9 @@ if [[ -n "${_kc_version}" ]]; then
 
     # shellcheck disable=SC1090
     [[ -f "${_kc_cache}" ]] && source "${_kc_cache}"
+
+    _CONTAINERS_KUBECTL_COMPLETION="${_kc_cache}"
+    [[ -n "${ZSH_VERSION:-}" ]] && precmd_functions+=(_containers_kubectl_completion_rearm)
 fi
 
 # bash only: make completions work for the 'k' alias
