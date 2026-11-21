@@ -4,6 +4,37 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **`wb tools install docker` and `wb tools install podman`
+  (workbench-containers#2).** Fedora/RHEL, Debian/Ubuntu, Arch and macOS.
+  Docker on Linux is rootless: Docker CE from Docker's own repository (key
+  pinned, workbench-core D79) or Arch's packages, then
+  `dockerd-rootless-setuptool.sh`, a per-user service, linger and the
+  `rootless` CLI context, with no system daemon and no `docker` group. On
+  macOS it installs Docker Desktop. It asks before removing a conflicting
+  `podman-docker`. Podman installs `toolbox` and `podman-compose` with it, and
+  offers `podman-docker` when no `docker` command exists. `installed-docker`
+  tells the real Docker CLI from the `podman-docker` shim, so
+  `wb tools upgrade` only touches a real install.
+- **`dc` finds the `docker compose` plugin.** Order is `DOCKER_COMPOSE_CMD`,
+  `docker-compose`, the plugin (real `docker` binary only), `podman-compose`.
+  The plugin is detected by its file, so shell start-up does not run docker.
+- The docker aliases' "needs docker" listing now says
+  `install: wb tools install docker`.
+
+### Fixed
+
+- **kubectl completion in zsh survives a later `compinit`
+  (workbench-containers#28).** Without workbench-shell, this module runs
+  `compinit` itself so kubectl's completion can register. A plain `compinit`
+  in your own `.zshrc` after this module then reset zsh's completion table and
+  dropped it, so `kubectl <TAB>` completed nothing. A one-shot hook now
+  registers it again before the first prompt. The other orders (your
+  `compinit` first, or none at all) already worked. New
+  `tests/check-kubectl-completion.sh` covers all three in a real interactive
+  zsh.
+
 ### Changed
 
 - **Agent and contributor guidance covers the stale-base CHANGELOG trap
