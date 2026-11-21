@@ -15,7 +15,8 @@
 #   - the one-shot hook removes itself after the first prompt;
 #   - bash still registers completion for the `k` alias.
 #
-# Needs zsh; skipped without it.
+# Needs zsh; skipped without it. The sed calls use -E, the one regex flavour
+# GNU and BSD (macOS) sed share; BRE alternation (\|) is GNU-only.
 # shellcheck disable=SC2016  # probe commands are for the zsh under test, not this shell
 set -uo pipefail
 
@@ -75,7 +76,7 @@ run_zsh() {
         'exit' \
         | env -i HOME="${home}" ZDOTDIR="${home}" PATH="${BIN}" TERM=dumb \
             WORKBENCH_SHELL=zsh WORKBENCH_OS=Linux \
-            "${ZSH}" -d -i 2>&1 | sed -n 's/.*\(\(KUBECTL\|COMPDEF\|HOOK\):.*\)$/\1/p'
+            "${ZSH}" -d -i 2>&1 | sed -En 's/.*((KUBECTL|COMPDEF|HOOK):.*)$/\1/p'
 }
 
 expect() {
@@ -113,7 +114,7 @@ for _round in first second; do
     out="$(printf '%s\n' 'print "KUBECTL:${_comps[kubectl]:-unset}"' 'exit' \
         | env -i HOME="${home}" ZDOTDIR="${home}" PATH="${BIN}" TERM=dumb \
             WORKBENCH_SHELL=zsh WORKBENCH_OS=Linux "${ZSH}" -d -i 2>&1 \
-        | sed -n 's/.*\(KUBECTL:.*\)$/\1/p')"
+        | sed -En 's/.*(KUBECTL:.*)$/\1/p')"
     expect "${_round} shell in the same HOME: kubectl is registered" "${out}" "KUBECTL:_kubectl"
 done
 
