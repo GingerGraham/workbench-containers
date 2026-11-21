@@ -10,7 +10,8 @@
 #   - the docker aliases need a real docker binary, not the docker→podman
 #     alias, so they aren't listed on a podman-only PATH;
 #   - the docker→podman alias only when there is no docker binary;
-#   - dc resolves to DOCKER_COMPOSE_CMD, else docker-compose, else
+#   - dc resolves to DOCKER_COMPOSE_CMD, else docker-compose, else the
+#     docker compose plugin (only with a real docker binary), else
 #     podman-compose, and is undeclared without any of them;
 #   - set-kubectl called twice with -v uses the second version (OPTIND);
 #   - set-kubectl leaves a kubectl elsewhere on PATH alone;
@@ -104,6 +105,23 @@ case "${SCENARIO}" in
         . "${R}/shell/containers.sh"
         check "DOCKER_COMPOSE_CMD wins: dc is 'docker compose'" '[ "$(alias_value dc)" = "docker compose" ]'
         ;;
+    compose-plugin)
+        . "${R}/shell/containers.sh"
+        check "docker compose plugin only: dc is 'docker compose'" '[ "$(alias_value dc)" = "docker compose" ]'
+        check "docker compose plugin only: dc listed" 'listed dc'
+        ;;
+    compose-plugin-over-podman)
+        . "${R}/shell/containers.sh"
+        check "plugin and podman-compose: dc is 'docker compose'" '[ "$(alias_value dc)" = "docker compose" ]'
+        ;;
+    compose-binary-over-plugin)
+        . "${R}/shell/containers.sh"
+        check "docker-compose and plugin: dc is docker-compose" '[ "$(alias_value dc)" = "docker-compose" ]'
+        ;;
+    compose-plugin-no-docker)
+        . "${R}/shell/containers.sh"
+        check "plugin file but no docker binary: dc is podman-compose, not 'docker compose'" '[ "$(alias_value dc)" = "podman-compose" ]'
+        ;;
     no-compose)
         . "${R}/shell/containers.sh"
         check "no compose: dc not defined and not listed" '! alias dc >/dev/null 2>&1 && ! listed dc'
@@ -175,6 +193,10 @@ _fake "${WORK}/podman" podman-compose
 _fake "${WORK}/pkg" kubectl 'echo "Client Version: v1.29.0"'
 _fake "${WORK}/curl" curl 'echo v1.32.0'
 mkdir -p "${WORK}/empty"
+# docker with no compose binary, and a docker compose plugin under
+# DOCKER_CONFIG (the first directory the plugin lookup checks).
+_fake "${WORK}/docker-only" docker
+_fake "${WORK}/dockercfg/cli-plugins" docker-compose
 
 shells="$(command -v bash)"
 if command -v zsh &>/dev/null; then
@@ -194,6 +216,10 @@ for sh in ${shells}; do
     run_scenario "${sh}" both-compose        "${WORK}/docker:${WORK}/podman"
     run_scenario "${sh}" compose-env         "${WORK}/empty" DOCKER_COMPOSE_CMD="docker compose"
     run_scenario "${sh}" no-compose          "${WORK}/p-only"
+    run_scenario "${sh}" compose-plugin      "${WORK}/docker-only" DOCKER_CONFIG="${WORK}/dockercfg"
+    run_scenario "${sh}" compose-plugin-over-podman "${WORK}/docker-only:${WORK}/pc-only" DOCKER_CONFIG="${WORK}/dockercfg"
+    run_scenario "${sh}" compose-binary-over-plugin "${WORK}/docker:${WORK}/pc-only" DOCKER_CONFIG="${WORK}/dockercfg"
+    run_scenario "${sh}" compose-plugin-no-docker   "${WORK}/pc-only" DOCKER_CONFIG="${WORK}/dockercfg"
     run_scenario "${sh}" kubectl-versions    "${WORK}/empty"
     run_scenario "${sh}" kubectl-elsewhere   "${WORK}/pkg"
     run_scenario "${sh}" install-kubectl     "${WORK}/curl"
