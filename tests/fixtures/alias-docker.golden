@@ -1,0 +1,15 @@
+d=docker
+dc=docker-compose
+dex=docker exec -it
+di=docker images
+dlog=docker logs
+dps=docker ps
+dpsa=docker ps -a
+drm=docker rm
+drmi=docker rmi
+k=kubectl
+kube-version=kubectl version --client --short 2>/dev/null     || kubectl version --client | awk '/Client Version:/{print $NF}' | sed 's/^v//'
+pd=podman
+pdi=podman images
+pdps=podman ps
+pdpsa=podman ps -a
