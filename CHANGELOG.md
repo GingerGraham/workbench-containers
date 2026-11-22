@@ -4,6 +4,8 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-11-22
+
 ### Fixed
 
 - **The Docker, Podman, `docker` (-> Podman), `dc` and `k` aliases no longer replace an alias or function you already
