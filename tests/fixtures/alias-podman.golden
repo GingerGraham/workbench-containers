@@ -1,0 +1,8 @@
+dc=podman-compose
+docker=podman
+k=kubectl
+kube-version=kubectl version --client --short 2>/dev/null     || kubectl version --client | awk '/Client Version:/{print $NF}' | sed 's/^v//'
+pd=podman
+pdi=podman images
+pdps=podman ps
+pdpsa=podman ps -a

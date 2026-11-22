@@ -28,21 +28,21 @@ _wb_alias_availability --needs "docker (the binary, not the podman alias)" --ins
     _containers_docker_bin d dps dpsa di drm drmi dex dlog
 
 if _containers_docker_bin; then
-    alias d="docker"
-    alias dps="docker ps"
-    alias dpsa="docker ps -a"
-    alias di="docker images"
-    alias drm="docker rm"
-    alias drmi="docker rmi"
-    alias dex="docker exec -it"
-    alias dlog="docker logs"
+    workbench_alias_define d containers "docker"
+    workbench_alias_define dps containers "docker ps"
+    workbench_alias_define dpsa containers "docker ps -a"
+    workbench_alias_define di containers "docker images"
+    workbench_alias_define drm containers "docker rm"
+    workbench_alias_define drmi containers "docker rmi"
+    workbench_alias_define dex containers "docker exec -it"
+    workbench_alias_define dlog containers "docker logs"
 fi
 
 if command -v podman &>/dev/null; then
-    alias pd="podman"
-    alias pdps="podman ps"
-    alias pdpsa="podman ps -a"
-    alias pdi="podman images"
+    workbench_alias_define pd containers "podman"
+    workbench_alias_define pdps containers "podman ps"
+    workbench_alias_define pdpsa containers "podman ps -a"
+    workbench_alias_define pdi containers "podman images"
 fi
 
 # Same reasoning as the docker block above, for the podman-prefixed
@@ -53,7 +53,7 @@ _wb_declare_availability podman pd pdps pdpsa pdi
 _containers_docker_shim_ok() { command -v podman &>/dev/null && ! _containers_docker_bin; }
 _wb_alias_availability --needs "podman, and no docker binary" _containers_docker_shim_ok docker
 if _containers_docker_shim_ok; then
-    alias docker="podman"
+    workbench_alias_define docker containers "podman"
 fi
 
 # True when the real docker CLI has the compose plugin. Looks for the plugin
@@ -87,6 +87,5 @@ _containers_compose_cmd() {
 _wb_alias_availability --needs "docker-compose, the docker compose plugin or podman-compose (or DOCKER_COMPOSE_CMD)" \
     _containers_compose_cmd dc
 if _containers_compose_cmd >/dev/null; then
-    # shellcheck disable=SC2139  # chosen once, when the shell starts
-    alias dc="$(_containers_compose_cmd)"
+    workbench_alias_define dc containers "$(_containers_compose_cmd)"
 fi

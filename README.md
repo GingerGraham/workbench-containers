@@ -15,7 +15,9 @@ wb add containers
 - Docker (`d`/`dps`/`dpsa`/`di`/`drm`/`drmi`/`dex`/`dlog`) and Podman
   (`pd`/`pdps`/`pdpsa`/`pdi`) aliases. The Docker ones need a real `docker`
   binary. `docker` aliases to `podman` when Podman is present and no
-  `docker` binary is (rootless-first).
+  `docker` binary is (rootless-first). An alias is not defined when your shell
+  already has an alias or function of that name; yours is kept, and `wb status`
+  lists what was left alone.
 - `dc` — your `DOCKER_COMPOSE_CMD` if set, otherwise `docker-compose`, then the
   `docker compose` plugin (only with a real `docker` binary), then
   `podman-compose`; chosen when the shell starts.

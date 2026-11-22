@@ -64,6 +64,10 @@ _wb_alias_availability() {
     local _check="$1" _fn; shift
     for _fn in "$@"; do eval "_${_fn}-available() { ${_check}; }"; done
 }
+# Aliases go through workbench_alias_define (Core API 1.10). Nothing in these
+# scenarios is in the way of an alias, so defining it is all the stand-in does;
+# tests/check-alias-yield.sh covers a name that is taken.
+workbench_alias_define() { builtin alias "$1=$3"; }
 listed() { "_$1-available" >/dev/null 2>&1; }
 alias_value() {
     local _v
