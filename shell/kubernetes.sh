@@ -6,8 +6,8 @@
 
 # ── aliases ───────────────────────────────────────────────────────────────────
 _wb_declare_availability kubectl k kube-version
-alias k="kubectl"
-alias kube-version="kubectl version --client --short 2>/dev/null \
+workbench_alias_define k containers "kubectl"
+workbench_alias_define kube-version containers "kubectl version --client --short 2>/dev/null \
     || kubectl version --client | awk '/Client Version:/{print \$NF}' | sed 's/^v//'"
 
 # ── functions ─────────────────────────────────────────────────────────────────
