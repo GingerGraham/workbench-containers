@@ -4,6 +4,8 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-11-25
+
 ### Fixed
 
 - **The `stack-*` functions no longer set off direnv in zsh.** zsh runs its
