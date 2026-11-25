@@ -4,6 +4,23 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Compose stacks: `stack-new`, `stack-add`, `stack-list`, `stack-up`,
+  `stack-down`, `stack-logs`, `stack-compose`, `stack-path` and `stack-rm`.**
+  One folder per compose project under `~/.local/share/stacks/`
+  (`WORKBENCH_STACKS_DIR` overrides it), with the compose file and the
+  project's data together, so a stack runs the same from `stack-up`, from a
+  hand-run `compose up` in its folder, or on another machine. `stack-new
+  windows` creates a dockur/windows stack: Windows in a KVM virtual machine,
+  with user-mode networking, ports on `127.0.0.1`, a random password in a
+  mode 0600 `.env`, and `chattr +C` on the disk folder on btrfs.
+  `stack-add` brings a project you already have in, linked by default. The
+  stack functions use a stack's `.env` ahead of the same name exported in
+  your shell, and say so when they do. See the README's Stacks section. Needs
+  workbench-core 2.32.1 or later (`core_api: ">=1.12 <2.0"`); `wb update core`
+  first.
+
 ## [0.5.1] - 2026-11-22
 
 ### Fixed
