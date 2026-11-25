@@ -1,0 +1,39 @@
+# compose.yaml — workbench-containers stack template: Windows in a KVM
+# virtual machine (dockur/windows). Copied once by stack-new; yours to edit
+# afterwards. Change settings in .env beside this file, not here.
+#
+# Why it differs from dockur's README example (workbench-core D129):
+#   - NETWORK user, no /dev/net/tun, no NET_ADMIN: the same networking on
+#     every host and engine, with fewer privileges. SELinux hosts deny the
+#     tun device to containers anyway.
+#   - ports on ${WINDOWS_BIND}, 127.0.0.1 unless you change it: the web
+#     viewer has no password of its own.
+#   - no container_name, so several Windows stacks can run side by side.
+#   - :Z relabels the mounts for SELinux; hosts without SELinux ignore it.
+#   - unless-stopped: a VM you stopped stays stopped.
+#   - settings are WINDOWS_* in .env, so a generic variable exported in your
+#     shell (VERSION, USERNAME) can't stand in for one. The names on the left
+#     of environment: are dockur's own.
+
+services:
+  windows:
+    image: docker.io/dockurr/windows
+    environment:
+      VERSION: ${WINDOWS_VERSION:-11}
+      RAM_SIZE: ${WINDOWS_RAM_SIZE:-4G}
+      CPU_CORES: ${WINDOWS_CPU_CORES:-2}
+      DISK_SIZE: ${WINDOWS_DISK_SIZE:-64G}
+      USERNAME: ${WINDOWS_USERNAME}
+      PASSWORD: ${WINDOWS_PASSWORD}
+      NETWORK: ${WINDOWS_NETWORK:-user}
+    devices:
+      - /dev/kvm
+    ports:
+      - ${WINDOWS_BIND:-127.0.0.1}:${WINDOWS_WEB_PORT:-8006}:8006
+      - ${WINDOWS_BIND:-127.0.0.1}:${WINDOWS_RDP_PORT:-3389}:3389/tcp
+      - ${WINDOWS_BIND:-127.0.0.1}:${WINDOWS_RDP_PORT:-3389}:3389/udp
+    volumes:
+      - ./storage:/storage:Z
+      - ./shared:/shared:Z
+    restart: unless-stopped
+    stop_grace_period: 2m
