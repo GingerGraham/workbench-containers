@@ -4,6 +4,8 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-11-25
+
 ### Added
 
 - **Compose stacks: `stack-new`, `stack-add`, `stack-list`, `stack-up`,
