@@ -70,6 +70,8 @@ BIN_DOCKER_SHIM="${WORK}/bin-docker-shim"
 BIN_PODMAN_ONLY="${WORK}/bin-podman-only"
 BIN_EMPTY="${WORK}/bin-empty"
 mkdir -p "${BIN_EMPTY}"
+BIN_SLOWTR="${WORK}/bin-slowtr"
+_fake "${BIN_SLOWTR}" tr 'cat >/dev/null; printf "abcdefghijklmnopqrstuvwxyz0123456789"'
 
 # podman: ps and volume ls read control files; unshare really runs its
 # command (the stack-rm --purge case checks the folder is gone).
@@ -240,6 +242,13 @@ for n in Win11 -x _x .x a/b "a b" "" "$(printf '%064d' 0 | tr 0 a)"; do
     check "1 name '${n}' is rejected" '! _containers_stack_name_ok "${n}"'
 done
 
+# ── the random secret reads a bounded amount of input ────────────────────────
+# A fake tr that reads its whole input before printing, as BSD tr does when
+# SIGPIPE is ignored. With an endless /dev/urandom feeding it, it would never
+# finish; the scenario watchdog then fails the run.
+check "secret: 20 letters and digits" '[ "$(_containers_random_secret | tr -d "A-Za-z0-9\n" | wc -c | tr -d " ")" = 0 ] && [ "$(_containers_random_secret | tr -d "\n" | wc -c | tr -d " ")" = 20 ]'
+check "secret: two calls differ" '[ "$(_containers_random_secret)" != "$(_containers_random_secret)" ]'
+
 # ── 3. root creation (ext4, btrfs variants) ──────────────────────────────────
 fresh
 run _containers_stacks_root_ensure
@@ -354,7 +363,7 @@ D="${ROOT}/win11"
 : > "${CALLS}"
 HERE="$PWD"
 run stack-up win11
-check "9 stack-up runs podman-compose in the stack folder with -p -f up -d" '[ "${rc}" = 0 ] && has "$(calls)" "podman-compose|$(_containers_abs_dir "${D}")|-p win11 -f compose.yaml up -d"'
+check "9 stack-up runs podman-compose in the stack folder with -p -f up -d" '[ "${rc}" = 0 ] && has "$(calls)" "podman-compose|${D}|-p win11 -f compose.yaml up -d"'
 check "9 the caller's directory is unchanged" '[ "${PWD}" = "${HERE}" ]'
 check "9 loopback: no warning" '! has "${out}" "beyond this machine"'
 printf 'WINDOWS_BIND=0.0.0.0\n' >> "${D}/.env"
@@ -672,6 +681,11 @@ WORKBENCH_STACKS_SUBVOLUME=yes run _containers_stacks_root_ensure
 check "3 btrfs, SUBVOLUME=yes, no btrfs binary: a warning and a plain folder" '[ "${rc}" = 0 ] && has "${out}" "is btrfs-progs installed?" && [ -d "${WORKBENCH_STACKS_DIR}" ]'
 EOF
     run_scenario "${sh}" nobtrfs "${WORK}/scenario-nobtrfs.sh" "${BIN_DEFAULT}"
+    # The secret with a tr that only answers once its input ends.
+    cat > "${WORK}/scenario-secret.sh" <<'EOF'
+check "secret: a tr that reads its whole input still gets a finite one (20 characters)" '[ "$(_containers_random_secret)" = "abcdefghijklmnopqrst" ]'
+EOF
+    run_scenario "${sh}" secret "${WORK}/scenario-secret.sh" "${BIN_SLOWTR}"
 
     # 2: compose tool resolution, one scenario per PATH.
     run_scenario "${sh}" resolve-podman-first "${WORK}/scenario-resolve-run.sh" "${BIN_DEFAULT}:${BIN_DC}"

@@ -226,10 +226,15 @@ _containers_stacks_claimed_ports() {
     done
 }
 
-# _containers_random_secret — 20 letters and digits from /dev/urandom.
+# _containers_random_secret — 20 letters and digits from /dev/urandom. It
+# reads a fixed 512 bytes (about 125 letters and digits) rather than piping
+# the endless /dev/urandom into tr and waiting for head to close the pipe:
+# that only ends if tr is killed by SIGPIPE. CI runners can start a job with
+# SIGPIPE ignored, and BSD tr, unlike GNU tr, then keeps reading forever
+# instead of stopping at the write error (the macOS job hung on it).
 _containers_random_secret() {
     local s
-    s="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 20)"
+    s="$(head -c 512 /dev/urandom 2>/dev/null | LC_ALL=C tr -dc 'A-Za-z0-9' | head -c 20)"
     [ "${#s}" -eq 20 ] || return 1
     printf '%s\n' "${s}"
 }
