@@ -4,6 +4,16 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+- **The `stack-*` functions no longer set off direnv in zsh.** zsh runs its
+  `cd` hooks inside subshells too, so every stack command that entered a
+  stack folder ran direnv's hook, which reported the stack's `.env` as
+  blocked. The functions now enter stack folders without running the
+  shell's `cd` hooks (zoxide's no longer records them either). bash was
+  never affected. Don't `direnv allow` a stack folder: it would export the
+  stack's password into your shell.
+
 ## [0.6.0] - 2026-11-25
 
 ### Added

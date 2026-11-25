@@ -148,6 +148,13 @@ plain compose does.
 Template variables are named after the template (`WINDOWS_*`). Imported
 stacks keep their own variable names.
 
+**direnv.** The `stack-*` functions don't run your shell's `cd` hooks when
+they enter a stack folder, so direnv stays quiet. If you `cd` into a stack
+folder yourself, direnv with `load_dotenv` on reports the stack's `.env` as
+blocked. Leave it blocked: `direnv allow`, or a `direnv.toml` whitelist
+covering the stacks folder, makes direnv export the stack's settings,
+including its password, into your shell.
+
 ### Importing a project
 
 `stack-add <folder>` links the folder into the stacks folder by default. It
