@@ -9,16 +9,18 @@
 version: 2
 branch: main
 
-core_api: ">=1.10 <2.0"
+core_api: ">=1.12 <2.0"
 sync:
   enabled: true
 
 info:
-  description: "Docker/Podman/Kubernetes aliases and installers"
+  description: "Docker/Podman/Kubernetes aliases, installers and compose stacks"
 
 register:
   shell:
     - src: shell/containers.sh
+      tier: tools
+    - src: shell/stacks.sh
       tier: tools
     - src: shell/kubernetes.sh
       tier: tools
