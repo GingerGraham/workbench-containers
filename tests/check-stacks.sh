@@ -599,28 +599,54 @@ esac
 EOF
 
 # run_scenario <shell> <scenario-name> <script> <PATH-dirs> [VAR=value ...]
-# Everything runs in a fresh HOME, with $CTL and $CALLS inside it.
+# Everything runs in a fresh HOME, with $CTL and $CALLS inside it. The
+# scenario runs in the background with stdin closed and its output in a file,
+# under a watchdog (SCENARIO_TIMEOUT seconds, default 300): a hang fails the
+# scenario, and shows the last check that finished, instead of stalling the
+# whole job. Output is read back once the scenario ends or is killed.
+SCENARIO_TIMEOUT="${SCENARIO_TIMEOUT:-300}"
 run_scenario() {
     local _sh="$1" _name="$2" _script="$3" _path="$4"; shift 4
-    local _home="${WORK}/home-${_sh##*/}-${_name}" _out _line
+    local _home="${WORK}/home-${_sh##*/}-${_name}" _log _line _pid _waited=0 _timed_out="" _last=""
     # shellcheck disable=SC2016  # expanded by the child shell
     local _body='. "$1"; . "$2"'
     mkdir -p "${_home}"
-    _out="$(env -i HOME="${_home}" PATH="${_path}:${HOSTBIN}" \
+    _log="${_home}.out"
+    echo "RUN:  [${_sh##*/}] ${_name}"
+    env -i HOME="${_home}" PATH="${_path}:${HOSTBIN}" \
         REPO_ROOT="${REPO_ROOT}" SCENARIO="${_name}" \
         XDG_DATA_HOME="${_home}/xdg" WORKBENCH_STACKS_DIR="${_home}/stacks" \
         CTL="${_home}/ctl" CALLS="${_home}/calls" \
         WORKBENCH_OS=Linux WORKBENCH_ARCH=x86_64 \
         _CONTAINERS_KVM_DEV=/dev/null "$@" \
-        "${_sh}" -c "${_body}" _ "${WORK}/prelude.sh" "${_script}" 2>&1)"
-    [[ -n "${_out}" ]] || { fail "[${_sh##*/}] ${_name}: scenario printed nothing"; return; }
+        "${_sh}" -c "${_body}" _ "${WORK}/prelude.sh" "${_script}" >"${_log}" 2>&1 </dev/null &
+    _pid=$!
+    while kill -0 "${_pid}" 2>/dev/null; do
+        if [[ "${_waited}" -ge "${SCENARIO_TIMEOUT}" ]]; then
+            _timed_out=1
+            kill "${_pid}" 2>/dev/null
+            sleep 1
+            kill -9 "${_pid}" 2>/dev/null
+            break
+        fi
+        sleep 1
+        _waited=$((_waited + 1))
+    done
+    wait "${_pid}" 2>/dev/null
+    if [[ ! -s "${_log}" && -z "${_timed_out}" ]]; then
+        fail "[${_sh##*/}] ${_name}: scenario printed nothing"
+        return
+    fi
     while IFS= read -r _line; do
         case "${_line}" in
-            PASS:*) ok "[${_sh##*/}] ${_line#PASS:}" ;;
-            BAD:*)  fail "[${_sh##*/}] ${_line#BAD:}" ;;
+            PASS:*) ok "[${_sh##*/}] ${_line#PASS:}"; _last="${_line#PASS:}" ;;
+            BAD:*)  fail "[${_sh##*/}] ${_line#BAD:}"; _last="${_line#BAD:}" ;;
             *)      fail "[${_sh##*/}] ${_name}: unexpected output: ${_line}" ;;
         esac
-    done <<< "${_out}"
+    done < "${_log}"
+    if [[ -n "${_timed_out}" ]]; then
+        fail "[${_sh##*/}] ${_name}: no result after ${SCENARIO_TIMEOUT}s, killed; the last check to finish was: ${_last:-<none>}"
+    fi
 }
 
 # A scenario that needs its control directory set up before the script runs.
