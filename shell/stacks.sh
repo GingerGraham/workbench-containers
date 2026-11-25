@@ -178,6 +178,22 @@ _containers_env_file_wins() {
     return 0
 }
 
+# _containers_cd_quiet <cd args...> — builtin cd without the shell's
+# directory-change hooks. zsh runs chpwd and every chpwd_functions entry on
+# each cd, subshells included. In a stack folder that meant direnv's hook
+# reported the stack's .env as blocked on every stack-* call (and with the
+# .env allowed, would have loaded it and tripped _containers_env_file_wins
+# for every key), and hooks such as zoxide's recorded the folder. zsh's -q
+# skips the hooks; bash has none on cd. Keyed on ZSH_VERSION, the
+# interpreter running this line, not WORKBENCH_SHELL (workbench-core D130).
+_containers_cd_quiet() {
+    if [ -n "${ZSH_VERSION:-}" ]; then
+        builtin cd -q "$@" || return
+    else
+        builtin cd "$@" || return
+    fi
+}
+
 # _containers_compose_in <dir> <compose> <project> <file> <args...> — runs
 # compose from <dir> in a subshell, so the caller's directory and
 # environment never change. A case per tool instead of word-splitting
@@ -186,7 +202,7 @@ _containers_compose_in() {
     local dir="$1" compose="$2" project="$3" file="$4"
     shift 4
     (
-        builtin cd -- "${dir}" || exit 1
+        _containers_cd_quiet -- "${dir}" || exit 1
         _containers_env_file_wins .env
         case "${compose}" in
             podman-compose)   command podman-compose -p "${project}" -f "${file}" "$@" ;;
@@ -412,7 +428,7 @@ _containers_project_from() {
 
 # _containers_abs_dir <dir> — the folder's absolute, symlink-free path.
 _containers_abs_dir() {
-    ( builtin cd -P -- "$1" >/dev/null 2>&1 && pwd -P )
+    ( _containers_cd_quiet -P -- "$1" >/dev/null 2>&1 && pwd -P )
 }
 
 # _containers_words <string> — the space-separated words, one per line, so

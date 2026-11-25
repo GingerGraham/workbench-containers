@@ -563,6 +563,27 @@ run stack-up win11
 check "18 no exported names overlap .env: no warning" '! has "${out}" "not your shell"'
 check "18 ... and compose sees OTHER_VAR still" 'grep -qx "OTHER_VAR=keepme" "${CTL}/envseen"'
 unset OTHER_VAR
+
+# ── 19. the shell's cd hooks don't run in stack folders ──────────────────────
+# zsh runs chpwd_functions on every cd, subshells included; direnv's hook is
+# one, and reported a stack's .env as blocked on every stack-* call. bash has
+# no cd hooks, so this case only applies in zsh.
+if [ -n "${ZSH_VERSION:-}" ]; then
+    _check_chpwd_hook() { printf '%s\n' "${PWD}" >> "${CTL}/chpwd"; }
+    chpwd_functions=(_check_chpwd_hook)
+    ( builtin cd -- "${ROOT}/win11" )
+    check "19 zsh: the recording hook runs on a plain subshell cd (the check can see it)" '[ -s "${CTL}/chpwd" ]'
+    rm -f "${CTL}/chpwd"
+    mkdir -p "${HOME}/src/hooked"; printf 'services:\n  web:\n    image: x\n' > "${HOME}/src/hooked/compose.yaml"
+    run stack-up win11
+    run stack-down win11
+    run stack-path win11
+    run stack-add "${HOME}/src/hooked"
+    run stack-up hooked
+    check "19 zsh: stack-up, stack-down, stack-path and stack-add run no chpwd hook" '[ ! -e "${CTL}/chpwd" ]'
+    chpwd_functions=()
+    unset -f _check_chpwd_hook
+fi
 EOF
 
 cat > "${WORK}/scenario-resolve.sh" <<'EOF'
