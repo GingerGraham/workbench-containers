@@ -30,10 +30,11 @@ wb add containers
 - Installers, via `wb tools install <name>` (and `wb tools upgrade <name>`):
   `docker`, `podman`, `helm`, and `kubectl` (latest stable, through
   `set-kubectl -l`).
-- Compose stacks (`stack-new`, `stack-add`, `stack-list`, `stack-up`,
-  `stack-down`, `stack-logs`, `stack-compose`, `stack-path`, `stack-rm`): one
-  folder per compose project under `~/.local/share/stacks/`, with a
-  dockur/windows template. See [Stacks](#stacks).
+- Compose stacks (`stack-new`, `stack-import`, `stack-list`, `stack-info`,
+  `stack-up`, `stack-down`, `stack-logs`, `stack-edit`, `stack-compose`,
+  `stack-path`, `stack-rm`, `stack-help`): one folder per compose project
+  under `~/.local/share/stacks/`, with a dockur/windows template. See
+  [Stacks](#stacks).
 
 ## Docker and Podman installers
 
@@ -74,157 +75,26 @@ Supported: Fedora/RHEL (dnf), Debian/Ubuntu (apt), Arch (pacman) and macOS
 
 ## Stacks
 
-A stack is one compose project in one folder. The compose file and the
-project's data live together, so a stack runs the same from `stack-up`, from
-a hand-run `compose up` in its folder, or on another machine after you copy
-the folder over. Stacks keep multi-gigabyte VM disks (dockur's Windows) and
-bind-mounted data in one place, instead of wherever compose happened to run.
-
-```text
-~/.local/share/stacks/
-├── .wb/<name>.conf        workbench's record of each stack
-├── win11/                 from a template: compose.yaml, .env, storage/, shared/
-└── gitea -> ~/src/gitea   imported with stack-add (linked)
-```
-
-The root is not under `~/.local/share/workbench/` on purpose: removing
-workbench removes that tree, and a stack's data is yours.
-
-| Function | What it does |
-|---|---|
-| `stack-new [<template>] [--name <name>]` | Create a stack from a template. With no template it lists them. Doesn't start it. |
-| `stack-add <folder\|file> [--name <name>] [--link\|--move\|--copy]` | Bring an existing compose project in. |
-| `stack-list` | One line per stack: origin, whether it runs, where it is. |
-| `stack-up <name> [args]` | `compose up -d` for the stack. |
-| `stack-down <name> [args]` | `compose down` for the stack, with the template's stop timeout. |
-| `stack-logs <name> [args]` | `compose logs`, e.g. `stack-logs win11 -f`. |
-| `stack-compose <name> <args>` | Any compose command, run for the stack, e.g. `stack-compose win11 ps -a`. |
-| `stack-path <name>` | Print the stack's folder: `cd "$(stack-path win11)"`. |
-| `stack-rm <name> [--purge]` | Forget a stack. `--purge` deletes its folder. |
+A stack is one compose project in one folder, under
+`~/.local/share/stacks/`. The compose file and the project's data live
+together, so multi-gigabyte VM disks and bind-mounted data stay in one
+place, and a stack runs the same from `stack-up`, from a hand-run
+`compose up` in its folder, or on another machine.
 
 ```sh
-stack-new windows --name win11
-stack-up win11
-stack-logs win11 -f
-stack-down win11
+stack-new windows          # a Windows VM from a template (stack-new alone lists them)
+stack-up                   # with one stack, the name can be left out
+stack-import ~/src/myapp   # bring your own compose project in
+stack-help                 # every command; stack-help import walks through importing
 ```
 
-### Settings
+Tab completion offers stack names, templates and options, in bash and zsh.
 
-Set these in `~/.config/workbench/local/settings.sh`, or export them.
-
-| Variable | Default | Effect |
-|---|---|---|
-| `WORKBENCH_STACKS_DIR` | `${XDG_DATA_HOME:-~/.local/share}/stacks` | The stacks folder. |
-| `WORKBENCH_STACKS_COMPOSE` | unset | `podman-compose`, `docker-compose` or `docker compose`. Anything else is an error. |
-| `WORKBENCH_STACKS_SUBVOLUME` | unset | `yes` or `no` answers the btrfs question below in advance. |
-| `WORKBENCH_STACKS_NOCOW` | `1` | `0` skips `chattr +C` on a template's disk folder. |
-
-### Compose tool
-
-A new stack uses `podman-compose` when `podman` and `podman-compose` are both
-installed. Otherwise it uses Docker's compose plugin (`docker compose`), then
-`docker-compose`, and only with a real Docker CLI, not `podman-docker`'s
-`docker` script. Podman comes first so a stack's files belong to your user,
-not to root. `dc` keeps its own order, which prefers `docker-compose`.
-
-The choice is recorded per stack, in its `.wb/<name>.conf`. A project started
-by one engine can't be managed by another, so installing Docker later doesn't
-change an existing stack.
-
-### `.env` beats the shell
-
-Plain compose fills in `${VAR}` from your shell's environment ahead of the
-folder's `.env`. The `stack-*` functions do the opposite: for every variable
-the stack's `.env` defines, they ignore the same name exported in your shell,
-and print one warning naming what they overrode. Without this, an exported
-`VERSION` or `USERNAME` would silently replace a stack's value. It applies to
-every stack, imported ones included, and to every compose tool.
-
-The cost: a one-off `TAG=dev stack-up x` no longer reaches compose. Edit the
-stack's `.env` instead. A hand-run `compose up` in the folder still behaves as
-plain compose does.
-
-Template variables are named after the template (`WINDOWS_*`). Imported
-stacks keep their own variable names.
-
-**direnv.** The `stack-*` functions don't run your shell's `cd` hooks when
-they enter a stack folder, so direnv stays quiet. If you `cd` into a stack
-folder yourself, direnv with `load_dotenv` on reports the stack's `.env` as
-blocked. Leave it blocked: `direnv allow`, or a `direnv.toml` whitelist
-covering the stacks folder, makes direnv export the stack's settings,
-including its password, into your shell.
-
-### Importing a project
-
-`stack-add <folder>` links the folder into the stacks folder by default. It
-doesn't move anything, and running containers keep their mounts.
-
-- `--move` and `--copy` refuse while the project is running, and also when the
-  container engine can't be asked.
-- A lone compose file is copied, with any `.env` beside it. If compose then
-  can't read the copy, it is removed again; the file probably refers to files
-  beside the original, so add its folder instead.
-- The project name is kept (`name:` in the file, otherwise the folder's name),
-  because named volumes are keyed by it. `--name` overrides it, and becomes the
-  project name.
-- Named volumes are reported, not moved or rewritten. They stay in the
-  engine's storage, and `stack-rm --purge` leaves them behind.
-
-`stack-rm` on a linked stack removes the link and the record only. Your
-folder stays.
-
-### Windows template
-
-`stack-new windows` creates a [dockur/windows](https://github.com/dockur/windows)
-stack: Windows in a KVM virtual machine, driven by the stack's `compose.yaml`
-and `.env`. The first `stack-up` downloads Windows (several GB) and installs
-it unattended; follow it with `stack-logs <name> -f`. The folder is yours
-once created and is never synced again.
-
-- **KVM.** Needs a readable and writable `/dev/kvm`: Linux, or WSL2 with
-  nested virtualisation. It doesn't work on macOS or Docker Desktop.
-- **Networking.** The template uses `NETWORK: user` (passt user-mode
-  networking), with no `/dev/net/tun` and no `NET_ADMIN`. SELinux hosts deny
-  containers the tun device anyway, so this gives every host and engine the
-  same behaviour with fewer privileges. RDP reaches Windows without extra
-  configuration. Forwarding another port into Windows (SSH, WinRM) takes a
-  `ports:` entry and a `USER_PORTS` entry under `environment:` in
-  `compose.yaml`. To switch to NAT, set `WINDOWS_NETWORK=nat` in `.env`, add
-  `/dev/net/tun` and `NET_ADMIN` to `compose.yaml`, and, on SELinux hosts,
-  change the policy yourself; workbench doesn't.
-- **Access.** Ports are published on `127.0.0.1`, and each stack gets its own
-  free ports (8006 and 3389 first, then the next free ones). The web viewer has
-  no password of its own, so think before changing `WINDOWS_BIND` in `.env`.
-  `stack-up` warns when it isn't a loopback address.
-- **Credentials.** `stack-new` writes your login name and a random 20-character
-  password to the stack's `.env` (mode 0600) and never prints the password.
-  They only apply when Windows is first installed; changing them later in
-  `.env` doesn't change the account.
-- **btrfs.** On btrfs, `storage/` gets `chattr +C` while it is still empty, so
-  the VM disk created in it is not copy-on-write. dockur's own btrfs warning
-  is expected and harmless once that is set. NOCOW also turns off btrfs
-  checksums for that disk. `WORKBENCH_STACKS_NOCOW=0` opts out.
-
-  The first time the stacks folder is created on btrfs, you are asked once
-  whether to make it a subvolume. A plain folder (the default, and the answer
-  with no terminal) is included in snapshots of `/home`, so each snapshot
-  makes a VM disk copy-on-write again. A subvolume is skipped by `/home`
-  snapshots, which also means snapshots, and backups taken from them, no
-  longer cover your stacks. A folder can only become a subvolume when it is
-  created, which is why it is asked then.
-- **Stopping.** `stack-down` gives Windows 120 seconds to shut down.
-  podman-compose ignores `stop_grace_period`, so the container's own stop
-  timeout stays at 10 seconds: stop the VM with `stack-down` before shutting
-  the host down. Under rootless podman, `restart: unless-stopped` doesn't
-  start anything at boot unless `podman-restart.service` is enabled and
-  lingering is on; workbench enables neither.
-- **Rootful Docker.** Docker running as root writes the stack's files as root,
-  so deleting them with `stack-rm --purge` needs `sudo`; it tells you the
-  command and never runs `sudo` itself.
-- **Pinning.** The image is `docker.io/dockurr/windows`, unpinned. To pin it,
-  put a tag on `image:` in the stack's `compose.yaml`.
-- **macOS.** A macOS template is planned separately.
+- [docs/stacks.md](docs/stacks.md): the full guide. Every command,
+  templates, importing, editing, settings, storage and troubleshooting.
+  In the shell: `wb module docs containers stacks`, or `stack-help --full`.
+- [docs/stack-templates.md](docs/stack-templates.md): how templates work, and
+  how to add one.
 
 ## Requires
 
