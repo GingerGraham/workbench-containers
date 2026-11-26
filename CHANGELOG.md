@@ -4,6 +4,8 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-26
+
 ### Added
 
 - **Tab completion for every stack command**, in bash and zsh: stack names,
