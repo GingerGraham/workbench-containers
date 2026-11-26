@@ -932,10 +932,15 @@ _wb_alias_availability --needs "podman with podman-compose, or Docker with compo
     stack-new stack-import stack-list stack-info stack-up stack-down stack-logs stack-edit stack-compose stack-path stack-rm stack-help
 
 # Tab completion for every stack command (workbench-core D132). Registered
-# unconditionally: completion on a host without compose still offers
-# templates and help topics.
-workbench_complete _containers_complete \
-    stack-new stack-import stack-list stack-info stack-up stack-down stack-logs stack-edit stack-compose stack-path stack-rm stack-help
+# whether or not compose is installed: completion on a host without compose
+# still offers templates and help topics. Only when the Core API has
+# workbench_complete (1.13): an older core keeps an earlier register list
+# that still sources this file, and the commands work there without
+# completion rather than every shell start printing "command not found".
+if command -v workbench_complete >/dev/null 2>&1; then
+    workbench_complete _containers_complete \
+        stack-new stack-import stack-list stack-info stack-up stack-down stack-logs stack-edit stack-compose stack-path stack-rm stack-help
+fi
 
 # _containers_stack_taken <name> — the root has an entry, or a record, for
 # <name>.

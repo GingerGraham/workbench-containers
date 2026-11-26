@@ -515,6 +515,10 @@ In zsh, a `compinit` run later in your `.zshrc`, or by a plugin manager
 after the first prompt, would normally drop the completions. workbench
 registers them again at the next prompt.
 
+Completion needs a workbench-core newer than 2.32.2. With an older core the
+stack commands still work, but nothing completes; `wb update` brings core up
+to date.
+
 ## How stacks run
 
 ### The compose tool

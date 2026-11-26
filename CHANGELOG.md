@@ -9,7 +9,8 @@ All notable changes to `workbench-containers` are documented here.
 - **Tab completion for every stack command**, in bash and zsh: stack names,
   templates (with descriptions in zsh), `stack-edit`'s files, compose
   commands for `stack-compose`, file names for `stack-import`, and every
-  option. It needs a workbench-core with Core API 1.13.
+  option. It needs a workbench-core with Core API 1.13; with an older core
+  the commands still work, without completion.
 - **The name can be left out** of `stack-up`, `stack-down`, `stack-logs`,
   `stack-path`, `stack-info`, `stack-edit` and `stack-compose`: with one
   stack it's used, and with several you choose from a numbered list.

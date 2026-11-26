@@ -168,9 +168,12 @@ _wb_declare_availability() { :; }
 _wb_alias_availability() { :; }
 workbench_alias_define() { :; }
 # Records each call's arguments, a call per line, in COMPLETE_CALLS.
+# NO_COMPLETE_STUB=1 leaves it undefined, as on a core older than 1.13.
 COMPLETE_CALLS=""
-workbench_complete() { COMPLETE_CALLS="${COMPLETE_CALLS}$*
+if [ -z "${NO_COMPLETE_STUB:-}" ]; then
+    workbench_complete() { COMPLETE_CALLS="${COMPLETE_CALLS}$*
 "; }
+fi
 _str_lower() { printf '%s' "$1" | tr '[:upper:]' '[:lower:]'; }
 _wb_have_tty() { [ -f "${CTL}/tty" ]; }
 # The answer is the first line of $CTL/answers; the prompt is kept.
@@ -238,7 +241,8 @@ workbench_port_pick() {
 }
 
 . "${R}/shell/containers.sh"
-. "${R}/shell/stacks.sh"
+# stacks.sh's own stderr while it's sourced, for case 21's older-core check.
+. "${R}/shell/stacks.sh" 2>"${HOME}/stacks-source.err"
 # The terminal, for the btrfs question, goes to a file.
 _containers_tty_print() { cat >> "${CTL}/tty.out"; }
 
@@ -1039,6 +1043,15 @@ mkdir -p "${CTL}"; : > "${CALLS}"
 EOF
 cat "${WORK}/scenario-prep.sh" "${WORK}/scenario-resolve.sh" > "${WORK}/scenario-resolve-run.sh"
 
+# 21, older core (D132): without workbench_complete, stacks.sh loads
+# silently, registers no completion, and the commands still work.
+cat > "${WORK}/scenario-nocomplete.sh" <<'EOF'
+check "21 older core: no workbench_complete, and sourcing stacks.sh printed nothing" '! command -v workbench_complete >/dev/null 2>&1 && [ ! -s "${HOME}/stacks-source.err" ]'
+check "21 older core: no completion registered" '[ -z "${COMPLETE_CALLS}" ]'
+run stack-help
+check "21 older core: the commands still work (stack-help)" '[ "${rc}" = 0 ] && has "${out}" "stack-import"'
+EOF
+
 shells="$(command -v bash)"
 if command -v zsh &>/dev/null; then
     shells="${shells} $(command -v zsh)"
@@ -1073,6 +1086,8 @@ EOF
     # 20–25 and 29–33 (D132), and 26–28 against the test-only templates.
     run_scenario "${sh}" d132 "${WORK}/scenario-d132.sh" "${BIN_DEFAULT}:${BIN_TOOLS}"
     run_scenario "${sh}" templates "${WORK}/scenario-tpl.sh" "${BIN_DEFAULT}:${BIN_TOOLS}" REPO_ROOT="${TPL_REPO}"
+    # 21, older core: no workbench_complete.
+    run_scenario "${sh}" no-complete "${WORK}/scenario-nocomplete.sh" "${BIN_DEFAULT}:${BIN_TOOLS}" NO_COMPLETE_STUB=1
 done
 
 # ── 17. template structure ───────────────────────────────────────────────────
