@@ -45,12 +45,13 @@ for key in version core_api register; do
     fi
 done
 
-# Core API 1.12: workbench_port_pick for stacks (D129); 1.10 added
-# workbench_alias_define, 1.8 the core-generated getters (D89).
-if [[ -n "${MANIFEST}" ]] && grep -qE '^core_api:[[:space:]]*">=1\.12 <2\.0"[[:space:]]*$' "${MANIFEST}"; then
-    ok "manifest declares core_api \">=1.12 <2.0\""
+# Core API 1.13: workbench_complete for the stack commands (D132); 1.12
+# added workbench_port_pick (D129), 1.10 workbench_alias_define, 1.8 the
+# core-generated getters (D89).
+if [[ -n "${MANIFEST}" ]] && grep -qE '^core_api:[[:space:]]*">=1\.13 <2\.0"[[:space:]]*$' "${MANIFEST}"; then
+    ok "manifest declares core_api \">=1.13 <2.0\""
 else
-    fail "manifest core_api is not \">=1.12 <2.0\""
+    fail "manifest core_api is not \">=1.13 <2.0\""
 fi
 
 # No hand-written getter: core generates get-containers-functions from

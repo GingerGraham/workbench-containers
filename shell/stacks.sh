@@ -2,8 +2,11 @@
 # shell/stacks.sh — workbench-containers
 # Compose stacks: one folder per compose project under
 # ${XDG_DATA_HOME:-~/.local/share}/stacks/<name>/, with functions to create
-# (stack-new from a template, stack-add from a project you already have),
-# list, run, stop, log and remove them. workbench-core D129.
+# them (stack-new from a template, stack-import from a project you already
+# have), list them, look at one (stack-info), run, stop and log them, edit
+# their files (stack-edit), and remove them; stack-help explains them.
+# workbench-core D129, D132. Tab completion for every stack command is
+# registered through the Core API's workbench_complete (D132).
 #
 # Registered at tier: tools (workbench.yml), after containers.sh, whose
 # _containers_docker_bin and _containers_docker_compose_plugin it calls.
@@ -31,6 +34,8 @@
 # _AWSEMU_OSTREE_MARKER is:
 #   _CONTAINERS_KVM_DEV         default /dev/kvm
 #   _CONTAINERS_SNAPPER_DIR     default /etc/snapper/configs
+#   _CONTAINERS_CPUINFO         default /proc/cpuinfo
+#   _CONTAINERS_DMI_VENDOR_FILE default /sys/class/dmi/id/sys_vendor
 
 _containers_stacks_lib_dir="$(builtin cd -- "$(dirname -- "${BASH_SOURCE[0]:-$0}")" >/dev/null 2>&1 && pwd)"
 
@@ -194,20 +199,46 @@ _containers_cd_quiet() {
     fi
 }
 
+# _containers_override_file_in <dir> <compose-file> — the override file
+# compose reads beside <compose-file> when no -f is given: compose.override.*
+# next to compose.*, docker-compose.override.* next to docker-compose.*.
+# The runner passes -f, which turns that automatic read off, so it names the
+# override itself (D132).
+_containers_override_file_in() {
+    local base f
+    case "$2" in
+        compose.yaml|compose.yml) base=compose ;;
+        docker-compose.yaml|docker-compose.yml) base=docker-compose ;;
+        *) return 1 ;;
+    esac
+    for f in "${base}.override.yaml" "${base}.override.yml"; do
+        if [ -f "$1/${f}" ]; then
+            printf '%s\n' "${f}"
+            return 0
+        fi
+    done
+    return 1
+}
+
 # _containers_compose_in <dir> <compose> <project> <file> <args...> — runs
 # compose from <dir> in a subshell, so the caller's directory and
-# environment never change. A case per tool instead of word-splitting
-# "docker compose": no arrays, and zsh doesn't split unquoted parameters.
+# environment never change. Builds the argument list with set --, as
+# _containers_pick_port does: no arrays, and zsh doesn't split unquoted
+# parameters.
 _containers_compose_in() {
-    local dir="$1" compose="$2" project="$3" file="$4"
+    local dir="$1" compose="$2" project="$3" file="$4" override
     shift 4
     (
         _containers_cd_quiet -- "${dir}" || exit 1
         _containers_env_file_wins .env
+        if override="$(_containers_override_file_in . "${file}")"; then
+            set -- -f "${override}" "$@"
+        fi
+        set -- -p "${project}" -f "${file}" "$@"
         case "${compose}" in
-            podman-compose)   command podman-compose -p "${project}" -f "${file}" "$@" ;;
-            docker-compose)   command docker-compose -p "${project}" -f "${file}" "$@" ;;
-            "docker compose") command docker compose -p "${project}" -f "${file}" "$@" ;;
+            podman-compose)   command podman-compose "$@" ;;
+            docker-compose)   command docker-compose "$@" ;;
+            "docker compose") command docker compose "$@" ;;
             *) log_error "stacks: unknown compose command '${compose}'"; exit 1 ;;
         esac
     )
@@ -565,25 +596,412 @@ _containers_usage() {
     printf '%s\n' "$@"
 }
 
+# _containers_stack_names — the stacks' names, one per line, sorted: every
+# entry in the root that isn't hidden and is a valid stack name. Runs only
+# find, so completion can call it on every TAB.
+_containers_stack_names() {
+    local root entry name
+    root="$(_containers_stacks_root)"
+    [ -d "${root}" ] || return 0
+    command find "${root}" -mindepth 1 -maxdepth 1 ! -name '.*' \( -type d -o -type l \) 2>/dev/null | sort | while IFS= read -r entry; do
+        name="${entry##*/}"
+        if _containers_stack_name_ok "${name}"; then
+            printf '%s\n' "${name}"
+        fi
+    done
+}
+
+# _containers_template_names — the templates' folder names, one per line.
+_containers_template_names() {
+    local conf dir
+    command find "$(_containers_stacks_templates_dir)" -mindepth 2 -maxdepth 2 -name template.conf -type f 2>/dev/null | sort | while IFS= read -r conf; do
+        dir="${conf%/template.conf}"
+        printf '%s\n' "${dir##*/}"
+    done
+}
+
+# _containers_template_resolve <name-or-alias> — the template folder name for
+# a template's own name or one of its ALIASES. Fails when nothing matches.
+_containers_template_resolve() {
+    local want="$1" t alias
+    case "${want}" in
+        ''|*/*|.*) return 1 ;;
+    esac
+    if [ -f "$(_containers_stacks_templates_dir)/${want}/template.conf" ]; then
+        printf '%s\n' "${want}"
+        return 0
+    fi
+    while IFS= read -r t; do
+        [ -n "${t}" ] || continue
+        while IFS= read -r alias; do
+            if [ -n "${alias}" ] && [ "${alias}" = "${want}" ]; then
+                printf '%s\n' "${t}"
+                return 0
+            fi
+        done <<EOF
+$(_containers_words "$(_containers_kv_get "$(_containers_stacks_templates_dir)/${t}/template.conf" ALIASES)")
+EOF
+    done <<EOF
+$(_containers_template_names)
+EOF
+    return 1
+}
+
+# _containers_nth_line <n> — line <n> of stdin.
+_containers_nth_line() {
+    awk -v n="$1" 'NR == n { print; exit }'
+}
+
+# _containers_choose <title> <lines> — a numbered menu on the terminal; prints
+# the chosen line. Up to three tries; Enter alone takes the first line.
+# Status 2 without a terminal or after three bad answers.
+_containers_choose() {
+    local title="$1" lines="$2" count answer tries=0
+    count="$(printf '%s\n' "${lines}" | grep -c .)"
+    _wb_have_tty || return 2
+    {
+        printf '%s\n' "${title}"
+        printf '%s\n' "${lines}" | awk 'NF { printf "  %d) %s\n", ++n, $0 }'
+    } | _containers_tty_print
+    while [ "${tries}" -lt 3 ]; do
+        answer=""
+        _read_prompt "Choice [1-${count}, Enter for 1]: " answer
+        case "${answer}" in
+            "") answer=1 ;;
+        esac
+        case "${answer}" in
+            *[!0123456789]*) ;;
+            *)
+                if [ "${answer}" -ge 1 ] && [ "${answer}" -le "${count}" ]; then
+                    printf '%s\n' "${lines}" | grep . | _containers_nth_line "${answer}"
+                    return 0
+                fi
+                ;;
+        esac
+        tries=$((tries + 1))
+    done
+    log_error "stacks: no choice made"
+    return 2
+}
+
+# _containers_stack_resolve <command> [<name>] — the stack a command acts on.
+# A name given must be a stack. With none: the only stack, if there is one;
+# otherwise a numbered menu on a terminal (status 2 without one).
+_containers_stack_resolve() {
+    local cmd="$1" name="${2:-}" names count menu entry state picked
+    if [ -n "${name}" ]; then
+        _containers_stack_dir "${name}" >/dev/null || return 1
+        printf '%s\n' "${name}"
+        return 0
+    fi
+    names="$(_containers_stack_names)"
+    count="$(printf '%s\n' "${names}" | grep -c .)"
+    if [ "${count}" -eq 0 ]; then
+        log_error "stacks: no stacks yet (stack-new or stack-import)"
+        return 1
+    fi
+    if [ "${count}" -eq 1 ]; then
+        log_info "stacks: ${cmd}: using ${names}, the only stack"
+        printf '%s\n' "${names}"
+        return 0
+    fi
+    if ! _wb_have_tty; then
+        log_error "stacks: ${cmd}: which stack? $(printf '%s\n' "${names}" | tr '\n' ' ')"
+        return 2
+    fi
+    menu=""
+    while IFS= read -r entry; do
+        _containers_stack_running "${entry}" </dev/null
+        case "$?" in
+            0) state=running ;;
+            1) state=stopped ;;
+            *) state=unknown ;;
+        esac
+        menu="${menu}$(printf '%-20s %s' "${entry}" "${state}")
+"
+    done <<EOF
+${names}
+EOF
+    picked="$(_containers_choose "Which stack?" "${menu}")" || return 2
+    printf '%s\n' "${picked%% *}"
+}
+
+# _containers_seconds <duration> — compose duration ("2m", "90s", "1m30s",
+# "1h", or a plain number of seconds) in whole seconds. Fails on anything
+# else, and on durations below a second (us, ms).
+_containers_seconds() {
+    printf '%s\n' "$1" | awk '
+        {
+            s = $0; total = 0; ok = 1
+            gsub(/["\047[:space:]]/, "", s)
+            if (s ~ /^[0-9]+$/) { print s; exit }
+            if (s !~ /^([0-9]+(\.[0-9]+)?(h|m|s))+$/) { exit 1 }
+            while (match(s, /^[0-9]+(\.[0-9]+)?(h|m|s)/)) {
+                part = substr(s, 1, RLENGTH); unit = substr(part, RLENGTH, 1)
+                value = substr(part, 1, RLENGTH - 1) + 0
+                total += (unit == "h") ? value * 3600 : (unit == "m") ? value * 60 : value
+                s = substr(s, RLENGTH + 1)
+            }
+            printf "%d\n", total
+        }'
+}
+
+# _containers_grace_seconds <compose-file> — the longest stop_grace_period in
+# the file, in seconds. Nothing when there isn't one.
+_containers_grace_seconds() {
+    local value best=0 secs
+    while IFS= read -r value; do
+        [ -n "${value}" ] || continue
+        secs="$(_containers_seconds "${value}")" || continue
+        [ -n "${secs}" ] || continue
+        if [ "${secs}" -gt "${best}" ]; then
+            best="${secs}"
+        fi
+    done <<EOF
+$(awk '/^[[:space:]]+stop_grace_period:/ { sub(/^[[:space:]]+stop_grace_period:[[:space:]]*/, ""); sub(/[[:space:]]*#.*$/, ""); print }' "$1" 2>/dev/null)
+EOF
+    if [ "${best}" -gt 0 ]; then
+        printf '%s\n' "${best}"
+    fi
+}
+
+# _containers_kib <size> — a dockur-style size ("64G", "512M", "1T") in KiB.
+# Fails on anything else, a bare number included.
+_containers_kib() {
+    printf '%s\n' "$1" | awk '
+        {
+            s = toupper($0); gsub(/["\047[:space:]]/, "", s); sub(/B$/, "", s)
+            if (s !~ /^[0-9]+(\.[0-9]+)?[KMGT]$/) { exit 1 }
+            unit = substr(s, length(s), 1); n = substr(s, 1, length(s) - 1)
+            m = (unit == "K") ? 1 : (unit == "M") ? 1024 : (unit == "G") ? 1048576 : 1073741824
+            printf "%d\n", n * m
+        }'
+}
+
+# _containers_free_kib <path> — free KiB on <path>'s filesystem (POSIX df).
+_containers_free_kib() {
+    df -Pk "$1" 2>/dev/null | awk 'NR == 2 { print $4 }'
+}
+
+# _containers_editor — the editor stack-edit runs: VISUAL, then EDITOR, then
+# the first of nano, vim and vi on PATH. Fails when there is none.
+_containers_editor() {
+    local e
+    if [ -n "${VISUAL:-}" ]; then
+        printf '%s\n' "${VISUAL}"
+        return 0
+    fi
+    if [ -n "${EDITOR:-}" ]; then
+        printf '%s\n' "${EDITOR}"
+        return 0
+    fi
+    for e in nano vim vi; do
+        if command -v "${e}" >/dev/null 2>&1; then
+            printf '%s\n' "${e}"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# _containers_run_editor <editor> <file> — runs the editor on the file. The
+# editor setting is split into words by sh, so EDITOR="code --wait" works,
+# and the file name is passed as "$1", never re-parsed.
+_containers_run_editor() {
+    # shellcheck disable=SC2016  # $1 is for the inner sh
+    command sh -c "$1"' "$1"' sh "$2"
+}
+
+# _containers_complete <index> <command> <words...> — the completion
+# provider for every stack-* command (workbench_complete, workbench-core
+# D132). Runs only find and grep, so it never waits on the engine.
+_containers_complete() {
+    local idx="$1" cmd="$2" cur="" prev="" npos=0 i=1 w
+    shift 2
+    for w in "$@"; do
+        if [ "${i}" -eq "${idx}" ]; then
+            cur="${w}"
+            break
+        fi
+        case "${w}" in
+            -*) ;;
+            *)
+                case "${prev}" in
+                    --name|--stop-timeout) ;;
+                    *) npos=$((npos + 1)) ;;
+                esac
+                ;;
+        esac
+        prev="${w}"
+        i=$((i + 1))
+    done
+    case "${prev}" in
+        --name|--stop-timeout) return 0 ;;
+    esac
+    case "${cur}" in
+        -*)
+            case "${cmd}" in
+                stack-new) printf '%s\n' --name --list --accept --help ;;
+                stack-import) printf '%s\n' --name --link --move --copy --stop-timeout --dry-run --yes --help ;;
+                stack-rm) printf '%s\n' --purge --help ;;
+                stack-logs) printf '%s\n' --follow --tail --timestamps --help ;;
+                stack-help) printf '%s\n' --full ;;
+                stack-compose) [ "${npos}" -eq 0 ] && printf '%s\n' --help ;;
+                *) printf '%s\n' --help ;;
+            esac
+            return 0
+            ;;
+    esac
+    case "${cmd}" in
+        stack-new)
+            if [ "${npos}" -eq 0 ]; then
+                _containers_template_names | while IFS= read -r w; do
+                    printf '%s\t%s\n' "${w}" "$(_containers_kv_get "$(_containers_stacks_templates_dir)/${w}/template.conf" DESCRIPTION)"
+                done
+            fi
+            ;;
+        stack-import)
+            [ "${npos}" -eq 0 ] && echo @files
+            ;;
+        stack-up|stack-down|stack-logs|stack-path|stack-info|stack-rm)
+            [ "${npos}" -eq 0 ] && _containers_stack_candidates
+            ;;
+        stack-edit)
+            case "${npos}" in
+                0) _containers_stack_candidates ;;
+                1) printf '%s\t%s\n' compose "the compose file" env "the stack's .env settings" override "compose's override file" ;;
+            esac
+            ;;
+        stack-compose)
+            case "${npos}" in
+                0) _containers_stack_candidates ;;
+                1) printf '%s\n' build config create down events exec images kill logs pause port ps pull restart rm run start stop top unpause up ;;
+            esac
+            ;;
+        stack-help)
+            if [ "${npos}" -eq 0 ]; then
+                printf '%s\t%s\n' import "bring your own compose project in" templates "what each template needs and gives you" commands "every stack command"
+            fi
+            ;;
+    esac
+}
+
+# _containers_stack_candidates — "<name><TAB><origin>" per stack.
+_containers_stack_candidates() {
+    local name origin
+    _containers_stack_names | while IFS= read -r name; do
+        origin="$(_containers_kv_get "$(_containers_stack_meta_path "${name}")" ORIGIN)"
+        printf '%s\t%s\n' "${name}" "${origin:-manual}"
+    done
+}
+
+# _containers_requires_check <name> <requires> — every requirement in the
+# space-separated list is met. kvm: /dev/kvm can be opened. avx2: the CPU
+# reports AVX2. Logs what's missing, with a hint, and fails.
+_containers_requires_check() {
+    local name="$1" req rc=0
+    while IFS= read -r req; do
+        case "${req}" in
+            "") ;;
+            kvm)
+                if ! _containers_kvm_ok; then
+                    log_error "stacks: ${name}: needs KVM, and ${_CONTAINERS_KVM_DEV:-/dev/kvm} isn't there or isn't readable and writable"
+                    log_error "stacks: $(_containers_kvm_hint)"
+                    rc=1
+                fi
+                ;;
+            avx2)
+                if ! grep -qw avx2 "${_CONTAINERS_CPUINFO:-/proc/cpuinfo}" 2>/dev/null; then
+                    log_error "stacks: ${name}: needs a CPU with AVX2 (Intel Haswell or AMD Zen, or newer), and this one doesn't report it"
+                    rc=1
+                fi
+                ;;
+            *)
+                log_error "stacks: ${name}: needs '${req}', which this version of workbench-containers can't check — update it (wb update containers)"
+                rc=1
+                ;;
+        esac
+    done <<EOF
+$(_containers_words "$2")
+EOF
+    return "${rc}"
+}
+
 _wb_alias_availability --needs "podman with podman-compose, or Docker with compose" --install podman \
     _containers_stack_compose_available \
-    stack-new stack-add stack-list stack-up stack-down stack-logs stack-compose stack-path stack-rm
+    stack-new stack-import stack-list stack-info stack-up stack-down stack-logs stack-edit stack-compose stack-path stack-rm stack-help
+
+# Tab completion for every stack command (workbench-core D132). Registered
+# unconditionally: completion on a host without compose still offers
+# templates and help topics.
+workbench_complete _containers_complete \
+    stack-new stack-import stack-list stack-info stack-up stack-down stack-logs stack-edit stack-compose stack-path stack-rm stack-help
+
+# _containers_stack_taken <name> — the root has an entry, or a record, for
+# <name>.
+_containers_stack_taken() {
+    local dir
+    dir="$(_containers_stacks_root)/$1"
+    [ -e "${dir}" ] || [ -L "${dir}" ] || [ -e "$(_containers_stack_meta_path "$1")" ]
+}
+
+# _containers_name_suggest <base> — <base> when it is free, else the first
+# free <base>-2, <base>-3, and so on.
+_containers_name_suggest() {
+    local n=2
+    if ! _containers_stack_taken "$1"; then
+        printf '%s\n' "$1"
+        return 0
+    fi
+    while _containers_stack_taken "$1-${n}"; do
+        n=$((n + 1))
+    done
+    printf '%s\n' "$1-${n}"
+}
+
+# _containers_vendor_line <check> — one factual line on the hardware maker
+# this machine reports, compared with <check>.
+_containers_vendor_line() {
+    local vendor
+    vendor="$(head -n 1 "${_CONTAINERS_DMI_VENDOR_FILE:-/sys/class/dmi/id/sys_vendor}" 2>/dev/null | sed 's/[[:space:]]*$//')"
+    if [ -z "${vendor}" ]; then
+        printf "This machine doesn't report its maker.\n"
+    elif [ "${vendor}" = "$1" ]; then
+        printf 'This machine reports its maker as %s. That matches %s.\n' "${vendor}" "$1"
+    else
+        printf "This machine reports its maker as %s. That isn't %s.\n" "${vendor}" "$1"
+    fi
+}
+
+# _containers_yes_default <prompt> — asks; 0 unless the answer is n or no.
+_containers_yes_default() {
+    local answer=""
+    _read_prompt "$1" answer
+    case "${answer}" in
+        n|N|no|NO|No) return 1 ;;
+    esac
+    return 0
+}
 
 # ── public functions ──────────────────────────────────────────────────────────
 
 stack-new() {
-    local template="" name="" list_only="" root dir tdir tconf
-    local requires bind_var ports dirs nocow_dirs login_vars secret_vars stop_timeout note
+    local template="" name="" list_only="" accept_flag="" root dir tdir tconf menu picked_line answer tries
+    local requires bind_var ports dirs nocow_dirs login_vars secret_vars stop_timeout note accept_text vendor_check disk_var
+    local disk_value disk_kib free_kib free_h accepted port_labels
     local compose claimed picked port_records env_extra entry var rest base label port d login secret sha created
     while [ "$#" -gt 0 ]; do
         case "$1" in
             -h|--help)
-                _containers_usage "Usage: stack-new [<template>] [--name <name>]" \
+                _containers_usage "Usage: stack-new [<template>] [--name <name>] [--accept]" \
                     "       stack-new --list" \
-                    "Creates a stack from a template in the stacks folder; doesn't start it."
+                    "Creates a stack from a template in the stacks folder; doesn't start it." \
+                    "With no template, asks which on a terminal (lists them otherwise). Without --name, suggests one." \
+                    "--accept accepts a template's licence without asking (needed without a terminal)."
                 return 0
                 ;;
             --list) list_only=1; shift ;;
+            --accept) accept_flag=1; shift ;;
             --name)
                 if [ "$#" -lt 2 ]; then
                     log_error "stacks: --name needs a value"
@@ -607,30 +1025,65 @@ stack-new() {
         esac
     done
 
-    if [ -z "${template}" ] || [ -n "${list_only}" ]; then
+    if [ -n "${list_only}" ] || { [ -z "${template}" ] && ! _wb_have_tty; }; then
         printf 'Templates (stack-new <template> [--name <name>]):\n'
         _containers_templates_list
         return 0
     fi
-    case "${template}" in
-        */*|.*) tconf="" ;;
-        *) tconf="$(_containers_stacks_templates_dir)/${template}/template.conf" ;;
-    esac
-    if [ -z "${tconf}" ] || [ ! -f "${tconf}" ]; then
+    if [ -z "${template}" ]; then
+        menu="$(_containers_template_names | while IFS= read -r entry; do
+            printf '%-10s %s\n' "${entry}" "$(_containers_kv_get "$(_containers_stacks_templates_dir)/${entry}/template.conf" DESCRIPTION)"
+        done)"
+        if [ -z "${menu}" ]; then
+            log_error "stacks: no templates found in $(_containers_stacks_templates_dir)"
+            return 1
+        fi
+        picked_line="$(_containers_choose "Which template?" "${menu}")" || return 2
+        template="${picked_line%% *}"
+    fi
+    if ! template="$(_containers_template_resolve "${template}")"; then
         log_error "stacks: no template '${template}'. Templates:"
         _containers_templates_list >&2
         return 1
     fi
-    tdir="$(dirname -- "${tconf}")"
+    tdir="$(_containers_stacks_templates_dir)/${template}"
+    tconf="${tdir}/template.conf"
 
-    name="${name:-${template}}"
+    if [ -z "${name}" ]; then
+        name="$(_containers_name_suggest "${template}")"
+        if _wb_have_tty; then
+            tries=0
+            while :; do
+                answer=""
+                _read_prompt "Name for the stack [${name}]: " answer
+                if [ -z "${answer}" ]; then
+                    break
+                fi
+                if ! _containers_stack_name_ok "${answer}"; then
+                    log_error "stacks: '${answer}' isn't a valid stack name (lowercase letters, digits, - and _, starting with a letter or digit, at most 63 characters)"
+                elif _containers_stack_taken "${answer}"; then
+                    log_error "stacks: ${answer}: already exists"
+                else
+                    name="${answer}"
+                    break
+                fi
+                tries=$((tries + 1))
+                if [ "${tries}" -ge 3 ]; then
+                    log_error "stacks: no name chosen; nothing was created"
+                    return 1
+                fi
+            done
+        else
+            log_info "stacks: naming it ${name} (--name to choose)"
+        fi
+    fi
     if ! _containers_stack_name_ok "${name}"; then
         log_error "stacks: '${name}' isn't a valid stack name (lowercase letters, digits, - and _, starting with a letter or digit, at most 63 characters)"
         return 1
     fi
     root="$(_containers_stacks_root)"
     dir="${root}/${name}"
-    if [ -e "${dir}" ] || [ -L "${dir}" ] || [ -e "$(_containers_stack_meta_path "${name}")" ]; then
+    if _containers_stack_taken "${name}"; then
         log_error "stacks: ${name}: already exists (${dir}); choose another with --name"
         return 1
     fi
@@ -644,14 +1097,56 @@ stack-new() {
     secret_vars="$(_containers_kv_get "${tconf}" SECRET_VARS)"
     stop_timeout="$(_containers_kv_get "${tconf}" STOP_TIMEOUT)"
     note="$(_containers_kv_get "${tconf}" NOTE)"
+    accept_text="$(_containers_kv_get "${tconf}" ACCEPT)"
+    vendor_check="$(_containers_kv_get "${tconf}" ACCEPT_VENDOR_CHECK)"
+    disk_var="$(_containers_kv_get "${tconf}" DISK_VAR)"
 
-    if [ "${requires}" = "kvm" ] && ! _containers_kvm_ok; then
-        log_error "stacks: ${name}: needs KVM, and ${_CONTAINERS_KVM_DEV:-/dev/kvm} isn't there or isn't readable and writable"
-        log_error "stacks: $(_containers_kvm_hint)"
-        return 1
+    _containers_requires_check "${name}" "${requires}" || return 1
+
+    # A licence to accept. Nothing has been created yet, the root included.
+    accepted=""
+    if [ -n "${accept_text}" ]; then
+        printf '%s\n' "${accept_text}"
+        if [ -n "${vendor_check}" ]; then
+            _containers_vendor_line "${vendor_check}"
+        fi
+        if [ -z "${accept_flag}" ]; then
+            if ! _wb_have_tty; then
+                log_error "stacks: ${name}: this template needs its licence accepted; run on a terminal, or add --accept"
+                return 1
+            fi
+            answer=""
+            _read_prompt "Accept and continue? [y/N] " answer
+            case "${answer}" in
+                y|Y|yes|YES|Yes) ;;
+                *)
+                    log_error "stacks: ${name}: not created"
+                    return 1
+                    ;;
+            esac
+        fi
+        accepted="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     fi
+
     compose="$(_containers_stack_compose_cmd)" || return 1
     _containers_stacks_root_ensure || return 1
+
+    # The VM disk is sparse and grows as it fills: warn, don't stop.
+    if [ -n "${disk_var}" ]; then
+        disk_value="$(_containers_kv_get "${tdir}/env.default" "${disk_var}")"
+        if disk_kib="$(_containers_kib "${disk_value}" 2>/dev/null)" && [ -n "${disk_kib}" ]; then
+            free_kib="$(_containers_free_kib "${root}")"
+            case "${free_kib}" in
+                ''|*[!0123456789]*) ;;
+                *)
+                    if [ "${free_kib}" -lt "${disk_kib}" ]; then
+                        free_h="$(df -Ph "${root}" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+                        log_warn "stacks: ${name}: the disk can grow to ${disk_value}, and ${root} has ${free_h:-${free_kib}K} free"
+                    fi
+                    ;;
+            esac
+        fi
+    fi
 
     # From here on, everything this call makes is removed again on failure.
     if ! mkdir "${dir}"; then
@@ -668,22 +1163,23 @@ stack-new() {
             _containers_stack_abort "${name}" "can't create ${dir}/${d}"
             return 1
         fi
-    done <<EOF
+    done <<EOT
 $(_containers_words "${dirs}")
-EOF
+EOT
     # Still empty here, which is what +C needs for the disk created in it.
     while IFS= read -r d; do
         [ -n "${d}" ] || continue
         _containers_nocow "${dir}/${d}"
-    done <<EOF
+    done <<EOT
 $(_containers_words "${nocow_dirs}")
-EOF
+EOT
 
     # Ports: one free port per template entry, never one another stack has
     # claimed (even a stopped one), nor one picked earlier in this call.
     claimed="$(_containers_stacks_claimed_ports)"
     picked=""
     port_records=""
+    port_labels=""
     while IFS= read -r entry; do
         [ -n "${entry}" ] || continue
         var="${entry%%:*}"
@@ -699,9 +1195,10 @@ ${picked}")"; then
 "
         port_records="${port_records}${var}=${port}|${label}
 "
-    done <<EOF
+        port_labels="${port_labels}${port_labels:+ }${var}:${label}"
+    done <<EOT
 $(_containers_words "${ports}")
-EOF
+EOT
 
     # What stack-new adds to the template's env.default.
     login="$(_containers_login_name)"
@@ -716,16 +1213,16 @@ EOF
         [ -n "${entry}" ] || continue
         env_extra="${env_extra}${entry%%|*}
 "
-    done <<EOF
+    done <<EOT
 ${port_records}
-EOF
+EOT
     while IFS= read -r var; do
         [ -n "${var}" ] || continue
         env_extra="${env_extra}${var}=${login}
 "
-    done <<EOF
+    done <<EOT
 $(_containers_words "${login_vars}")
-EOF
+EOT
     while IFS= read -r var; do
         [ -n "${var}" ] || continue
         if ! secret="$(_containers_random_secret)"; then
@@ -734,9 +1231,9 @@ EOF
         fi
         env_extra="${env_extra}${var}=${secret}
 "
-    done <<EOF
+    done <<EOT
 $(_containers_words "${secret_vars}")
-EOF
+EOT
 
     # umask 077 in a subshell: .env is created 0600, and the caller's umask
     # is untouched.
@@ -759,6 +1256,10 @@ EOF
         "STOP_TIMEOUT=${stop_timeout}" \
         "REQUIRES=${requires}" \
         "BIND_VAR=${bind_var}" \
+        "PORT_LABELS=${port_labels}" \
+        "LOGIN_VARS=${login_vars}" \
+        "SECRET_VARS=${secret_vars}" \
+        "ACCEPTED=${accepted}" \
         "CREATED=${created}"; then
         _containers_stack_abort "${name}" "can't write the stack's record"
         return 1
@@ -780,9 +1281,9 @@ EOF
         else
             printf '  %s: 127.0.0.1:%s\n' "${label}" "${port}"
         fi
-    done <<EOF
+    done <<EOT
 ${port_records}
-EOF
+EOT
     if [ -n "${login_vars}" ]; then
         printf '  User: %s\n' "${login}"
     fi
@@ -792,18 +1293,20 @@ EOF
     if [ -n "${note}" ]; then
         printf '%s\n' "${note}" | sed "s/<name>/${name}/g"
     fi
+    printf '  Details: stack-info %s\n' "${name}"
     printf 'Start it with: stack-up %s\n' "${name}"
 }
 
-stack-add() {
-    local source_arg="" name="" mode="" kind srcdir srcabs file compose project root dest
-    local size volumes verb rc added
+stack-import() {
+    local source_arg="" name="" mode="" dry_run="" assume_yes="" stop_flag="" stop_timeout=""
+    local kind srcdir srcabs file compose project root dest override picked_line
+    local size volumes verb rc added how timeout_text from_text
     while [ "$#" -gt 0 ]; do
         case "$1" in
             -h|--help)
-                _containers_usage "Usage: stack-add <folder|compose-file> [--name <name>] [--link|--move|--copy]" \
-                    "A folder is linked in place by default; a lone compose file is copied (with any .env beside it)." \
-                    "--move and --copy refuse while the project is running."
+                _containers_usage "Usage: stack-import <folder|compose-file> [--name <name>] [--link|--move|--copy]" \
+                    "                    [--stop-timeout <seconds>] [--dry-run] [--yes]" \
+                    "Brings a compose project you already have in as a stack. stack-help import walks through it."
                 return 0
                 ;;
             --name)
@@ -814,14 +1317,30 @@ stack-add() {
                 name="$2"
                 shift 2
                 ;;
+            --stop-timeout)
+                if [ "$#" -lt 2 ]; then
+                    log_error "stacks: --stop-timeout needs a number of seconds"
+                    return 2
+                fi
+                case "$2" in
+                    ''|*[!0123456789]*|0|00*)
+                        log_error "stacks: --stop-timeout takes a whole number of seconds, at least 1 (got '$2')"
+                        return 2
+                        ;;
+                esac
+                stop_flag="$2"
+                shift 2
+                ;;
             --link|--move|--copy) mode="${1#--}"; shift ;;
+            --dry-run) dry_run=1; shift ;;
+            --yes|-y) assume_yes=1; shift ;;
             -*)
-                log_error "stacks: stack-add: unknown option '$1'"
+                log_error "stacks: stack-import: unknown option '$1'"
                 return 2
                 ;;
             *)
                 if [ -n "${source_arg}" ]; then
-                    log_error "stacks: stack-add takes one folder or file (got '${source_arg}' and '$1')"
+                    log_error "stacks: stack-import takes one folder or file (got '${source_arg}' and '$1')"
                     return 2
                 fi
                 source_arg="$1"
@@ -830,7 +1349,9 @@ stack-add() {
         esac
     done
     if [ -z "${source_arg}" ]; then
-        log_error "stacks: stack-add needs a folder or a compose file"
+        _containers_usage "Usage: stack-import <folder|compose-file> [--name <name>] [--link|--move|--copy]" \
+            "                    [--stop-timeout <seconds>] [--dry-run] [--yes]" >&2
+        printf 'stack-help import walks through it.\n' >&2
         return 2
     fi
 
@@ -841,7 +1362,6 @@ stack-add() {
             log_error "stacks: no compose file in ${srcdir} (looked for compose.yaml, compose.yml, docker-compose.yaml, docker-compose.yml)"
             return 1
         fi
-        mode="${mode:-link}"
     elif [ -f "${source_arg}" ]; then
         kind="file"
         srcdir="$(dirname -- "${source_arg}")"
@@ -849,7 +1369,7 @@ stack-add() {
         case "${mode}" in
             ""|copy) mode=copy ;;
             *)
-                log_error "stacks: --${mode} needs a folder: point stack-add at the file's folder to move or link it"
+                log_error "stacks: --${mode} needs a folder: point stack-import at the file's folder to move or link it"
                 return 1
                 ;;
         esac
@@ -879,17 +1399,32 @@ stack-add() {
     fi
     root="$(_containers_stacks_root)"
     dest="${root}/${name}"
-    if [ -e "${dest}" ] || [ -L "${dest}" ] || [ -e "$(_containers_stack_meta_path "${name}")" ]; then
+    if _containers_stack_taken "${name}"; then
         log_error "stacks: ${name}: already exists (${dest}); choose another with --name"
         return 1
     fi
 
     # Compose has to accept the files where they are before anything moves.
     if ! _containers_compose_in "${srcabs}" "${compose}" "${project}" "${file}" config >/dev/null; then
-        log_error "stacks: ${name}: compose rejected ${srcabs}/${file} (see above); nothing was added"
+        log_error "stacks: ${name}: compose rejected ${srcabs}/${file} (see above); nothing was imported"
         return 1
     fi
 
+    if [ "${kind}" = "folder" ] && [ -z "${mode}" ]; then
+        if _wb_have_tty && [ -z "${dry_run}" ]; then
+            picked_line="$(_containers_choose "How should ${name} be imported?" "link   leave the files where they are; the stack points at them
+move   move the folder into ${dest}
+copy   copy it there and leave the original")" || return 2
+            mode="${picked_line%% *}"
+        else
+            mode="link"
+            if ! _wb_have_tty; then
+                log_info "stacks: linking in place (--move or --copy to change)"
+            fi
+        fi
+    fi
+
+    size=""
     if [ "${kind}" = "folder" ] && [ "${mode}" != "link" ]; then
         _containers_project_running "${compose}" "${project}"
         rc=$?
@@ -904,7 +1439,64 @@ stack-add() {
                 return 1
                 ;;
         esac
-        size="$(du -sh "${srcabs}" 2>/dev/null | cut -f1)"
+    fi
+    if [ "${mode}" != "link" ]; then
+        if [ "${kind}" = "folder" ]; then
+            size="$(du -sh "${srcabs}" 2>/dev/null | cut -f1)"
+        else
+            size="$(du -sh "${srcabs}/${file}" 2>/dev/null | cut -f1)"
+        fi
+    fi
+
+    # Best effort: not every compose tool has `config --volumes`.
+    volumes="$(_containers_compose_in "${srcabs}" "${compose}" "${project}" "${file}" config --volumes 2>/dev/null | awk 'NF { printf "%s%s", sep, $1; sep = ", " }')"
+    if [ -n "${stop_flag}" ]; then
+        stop_timeout="${stop_flag}"
+        timeout_text="${stop_timeout}s (--stop-timeout)"
+    else
+        stop_timeout="$(_containers_grace_seconds "${srcabs}/${file}")"
+        if [ -n "${stop_timeout}" ]; then
+            timeout_text="${stop_timeout}s, from stop_grace_period"
+        else
+            timeout_text="compose's default (10s)"
+        fi
+    fi
+    from_text="${file}"
+    if override="$(_containers_override_file_in "${srcabs}" "${file}")"; then
+        from_text="${file}, + ${override}"
+    fi
+    case "${mode}" in
+        link) how="link — the files stay where they are" ;;
+        move) how="move — into ${dest}" ;;
+        *)    how="copy — into ${dest}; the original stays" ;;
+    esac
+    printf 'Import %s\n' "${name}"
+    printf '  %-13s %s\n' from "${srcabs} (${from_text})"
+    printf '  %-13s %s\n' how "${how}"
+    if [ -n "${size}" ]; then
+        printf '  %-13s %s\n' size "${size}"
+    fi
+    printf '  %-13s %s\n' project "${project} (named volumes are keyed by it)"
+    printf '  %-13s %s\n' "compose tool" "${compose}"
+    printf '  %-13s %s\n' "stop timeout" "${timeout_text}"
+    if [ -n "${volumes}" ]; then
+        printf '  %-13s %s\n' volumes "${volumes} — kept by the engine, not in the folder"
+    else
+        printf '  %-13s %s\n' volumes "none found"
+    fi
+
+    if [ -n "${dry_run}" ]; then
+        printf 'stacks: %s: dry run, nothing changed\n' "${name}"
+        return 0
+    fi
+    if [ -z "${assume_yes}" ] && _wb_have_tty; then
+        if ! _containers_yes_default "Import it? [Y/n] "; then
+            printf 'stacks: %s: not imported\n' "${name}"
+            return 1
+        fi
+    fi
+
+    if [ "${mode}" != "link" ]; then
         case "${mode}" in
             move) verb="Moving" ;;
             *) verb="Copying" ;;
@@ -937,11 +1529,17 @@ stack-add() {
     esac
 
     added="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    from_text=""
+    if [ "${mode}" != "link" ]; then
+        from_text="FROM=${srcabs}"
+    fi
     if ! _containers_stack_meta_write "${name}" \
         "ORIGIN=${mode}" \
         "PROJECT=${project}" \
         "COMPOSE=${compose}" \
         "COMPOSE_FILE=${file}" \
+        "STOP_TIMEOUT=${stop_timeout}" \
+        ${from_text:+"${from_text}"} \
         "ADDED=${added}"; then
         log_error "stacks: ${name}: can't write the stack's record"
         return 1
@@ -951,18 +1549,12 @@ stack-add() {
         if ! _containers_stack_run "${name}" config >/dev/null; then
             rm -rf -- "${dest}"
             rm -f -- "$(_containers_stack_meta_path "${name}")"
-            log_error "stacks: ${name}: ${file} probably refers to files beside the original; try: stack-add ${srcabs} --copy"
+            log_error "stacks: ${name}: ${file} probably refers to files beside the original; try: stack-import ${srcabs} --copy"
             return 1
         fi
     fi
 
-    # Best effort: not every compose tool has `config --volumes`.
-    volumes="$(_containers_stack_run "${name}" config --volumes 2>/dev/null | awk 'NF { printf "%s%s", sep, $1; sep = ", " }')"
-    if [ -n "${volumes}" ]; then
-        log_warn "stacks: ${name}: keeps data in named volumes (${volumes}), stored by the engine, not in the stack folder; stack-rm --purge leaves them"
-    fi
-
-    printf 'stacks: %s: added as %s (%s)\n' "${name}" "${dest}" "${mode}"
+    printf 'stacks: %s: imported as %s (%s)\n' "${name}" "${dest}" "${mode}"
     printf 'Start it with: stack-up %s\n' "${name}"
 }
 
@@ -985,7 +1577,7 @@ stack-list() {
         entries="$(command find "${root}" -mindepth 1 -maxdepth 1 ! -name '.*' \( -type d -o -type l \) 2>/dev/null | sort)"
     fi
     if [ -z "${entries}" ]; then
-        printf 'stacks: no stacks yet (stack-new or stack-add)\n'
+        printf 'stacks: no stacks yet (stack-new or stack-import)\n'
         return 0
     fi
     printf '%-20s %-20s %-8s %s\n' NAME ORIGIN STATE PATH
@@ -1016,15 +1608,17 @@ EOF
 }
 
 stack-up() {
-    local name="${1:-}" dir requires bind_var bind_value
-    case "${name}" in
-        ""|-h|--help)
-            _containers_usage "Usage: stack-up <name> [compose up args...]" "Starts the stack in the background (compose up -d)."
-            [ -n "${name}" ] && return 0
-            return 2
+    local name="" dir requires bind_var bind_value
+    case "${1:-}" in
+        -h|--help)
+            _containers_usage "Usage: stack-up [<name>] [compose up args...]" \
+                "Starts the stack in the background (compose up -d). With one stack, the name can be left out."
+            return 0
             ;;
+        ""|-*) ;;
+        *) name="$1"; shift ;;
     esac
-    shift
+    name="$(_containers_stack_resolve stack-up "${name}")" || return $?
     dir="$(_containers_stack_dir "${name}")" || return 1
     bind_var="$(_containers_kv_get "$(_containers_stack_meta_path "${name}")" BIND_VAR)"
     if [ -n "${bind_var}" ]; then
@@ -1035,67 +1629,320 @@ stack-up() {
         esac
     fi
     requires="$(_containers_kv_get "$(_containers_stack_meta_path "${name}")" REQUIRES)"
-    if [ "${requires}" = "kvm" ] && ! _containers_kvm_ok; then
-        log_error "stacks: ${name}: needs KVM, and ${_CONTAINERS_KVM_DEV:-/dev/kvm} isn't there or isn't readable and writable"
-        log_error "stacks: $(_containers_kvm_hint)"
-        return 1
-    fi
+    _containers_requires_check "${name}" "${requires}" || return 1
     _containers_stack_run "${name}" up -d "$@"
 }
 
 stack-down() {
-    local name="${1:-}"
-    case "${name}" in
-        ""|-h|--help)
-            _containers_usage "Usage: stack-down <name> [compose down args...]" "Stops the stack and removes its containers and network; its folder and volumes stay."
-            [ -n "${name}" ] && return 0
-            return 2
+    local name=""
+    case "${1:-}" in
+        -h|--help)
+            _containers_usage "Usage: stack-down [<name>] [compose down args...]" \
+                "Stops the stack and removes its containers and network; its folder and volumes stay." \
+                "Waits for the stack's stop timeout. With one stack, the name can be left out."
+            return 0
             ;;
+        ""|-*) ;;
+        *) name="$1"; shift ;;
     esac
-    shift
+    name="$(_containers_stack_resolve stack-down "${name}")" || return $?
     _containers_stack_down "${name}" "$@"
 }
 
 stack-logs() {
-    local name="${1:-}"
-    case "${name}" in
-        ""|-h|--help)
-            _containers_usage "Usage: stack-logs <name> [compose logs args...]   e.g. stack-logs win11 -f"
-            [ -n "${name}" ] && return 0
-            return 2
+    local name=""
+    case "${1:-}" in
+        -h|--help)
+            _containers_usage "Usage: stack-logs [<name>] [compose logs args...]   e.g. stack-logs win11 -f" \
+                "Shows the stack's logs. With one stack, the name can be left out: stack-logs -f"
+            return 0
             ;;
+        ""|-*) ;;
+        *) name="$1"; shift ;;
     esac
-    shift
+    name="$(_containers_stack_resolve stack-logs "${name}")" || return $?
     _containers_stack_run "${name}" logs "$@"
 }
 
 stack-compose() {
-    local name="${1:-}"
-    case "${name}" in
+    local name=""
+    case "${1:-}" in
         -h|--help)
-            _containers_usage "Usage: stack-compose <name> <compose args...>   e.g. stack-compose win11 ps -a" "Runs compose for the stack, from its folder, with its recorded tool, project and file."
+            _containers_usage "Usage: stack-compose [<name>] <compose args...>   e.g. stack-compose win11 ps -a" \
+                "Runs compose for the stack, from its folder, with its recorded tool, project and file." \
+                "The first word is taken as the stack only when a stack has that name; otherwise every" \
+                "word goes to compose, and the stack is the only one (or chosen from a list)."
             return 0
             ;;
+        "")
+            _containers_usage "Usage: stack-compose [<name>] <compose args...>   e.g. stack-compose win11 ps -a" >&2
+            return 2
+            ;;
     esac
-    if [ -z "${name}" ] || [ "$#" -lt 2 ]; then
-        _containers_usage "Usage: stack-compose <name> <compose args...>   e.g. stack-compose win11 ps -a"
-        return 2
+    if _containers_stack_name_ok "$1" && [ -d "$(_containers_stacks_root)/$1" ]; then
+        name="$1"
+        shift
+        if [ "$#" -eq 0 ]; then
+            _containers_usage "Usage: stack-compose [<name>] <compose args...>   e.g. stack-compose win11 ps -a" >&2
+            return 2
+        fi
+    else
+        name="$(_containers_stack_resolve stack-compose "")" || return $?
     fi
-    shift
     _containers_stack_run "${name}" "$@"
 }
 
 stack-path() {
-    local name="${1:-}" dir
-    case "${name}" in
-        ""|-h|--help)
-            _containers_usage "Usage: stack-path <name>   e.g. cd \"\$(stack-path win11)\""
-            [ -n "${name}" ] && return 0
+    local name="" dir
+    case "${1:-}" in
+        -h|--help)
+            _containers_usage "Usage: stack-path [<name>]   e.g. cd \"\$(stack-path win11)\"" \
+                "Prints the stack's folder. With one stack, the name can be left out."
+            return 0
+            ;;
+        ""|-*) ;;
+        *) name="$1"; shift ;;
+    esac
+    name="$(_containers_stack_resolve stack-path "${name}")" || return $?
+    dir="$(_containers_stack_dir "${name}")" || return 1
+    _containers_abs_dir "${dir}"
+}
+
+# _containers_info_line <label> <value> — one stack-info line, skipped when
+# the value is empty.
+_containers_info_line() {
+    [ -n "$2" ] || return 0
+    printf '  %-13s %s\n' "$1" "$2"
+}
+
+stack-info() {
+    local name="" dir rec env target origin when from state rc compose file override project tool_text
+    local labels entry var label port host bind_var timeout_text requires size volumes login_vars secret_vars login_text value
+    case "${1:-}" in
+        -h|--help)
+            _containers_usage "Usage: stack-info [<name>]" \
+                "Shows a stack's folder, origin, state, compose files, ports, login, stop timeout, needs, size and volumes." \
+                "Never prints a secret's value. With one stack, the name can be left out."
+            return 0
+            ;;
+        ""|-*) ;;
+        *) name="$1"; shift ;;
+    esac
+    name="$(_containers_stack_resolve stack-info "${name}")" || return $?
+    dir="$(_containers_stack_dir "${name}")" || return 1
+    rec="$(_containers_stack_meta_path "${name}")"
+    env="${dir}/.env"
+
+    target=""
+    if [ -L "${dir}" ]; then
+        target="$(readlink "${dir}")"
+    fi
+    origin="$(_containers_kv_get "${rec}" ORIGIN)"
+    when="$(_containers_kv_get "${rec}" CREATED)"
+    [ -n "${when}" ] || when="$(_containers_kv_get "${rec}" ADDED)"
+    if [ -n "${when}" ]; then
+        origin="${origin:-manual}, created ${when}"
+    fi
+    from="$(_containers_kv_get "${rec}" FROM)"
+    _containers_stack_running "${name}"
+    rc=$?
+    case "${rc}" in
+        0) state=running ;;
+        1) state=stopped ;;
+        *) state=unknown ;;
+    esac
+    compose="$(_containers_stack_compose_of "${name}" 2>/dev/null)" || compose=""
+    file="$(_containers_stack_file_of "${name}" 2>/dev/null)" || file=""
+    project="$(_containers_stack_project_of "${name}")"
+    tool_text="${file}"
+    if [ -n "${file}" ] && override="$(_containers_override_file_in "${dir}" "${file}")"; then
+        tool_text="${tool_text} (+ ${override})"
+    fi
+    tool_text="${compose}${compose:+, }${tool_text}${tool_text:+, }project ${project}"
+
+    printf '%s\n' "${name}"
+    _containers_info_line folder "$(_containers_stacks_root)/${name}"
+    _containers_info_line "linked to" "${target}"
+    _containers_info_line origin "${origin:-manual}"
+    _containers_info_line from "${from}"
+    _containers_info_line state "${state}"
+    _containers_info_line compose "${tool_text}"
+
+    labels="$(_containers_kv_get "${rec}" PORT_LABELS)"
+    if [ -n "${labels}" ]; then
+        bind_var="$(_containers_kv_get "${rec}" BIND_VAR)"
+        host=""
+        if [ -n "${bind_var}" ]; then
+            host="$(_containers_kv_get "${env}" "${bind_var}")"
+        fi
+        case "${host}" in
+            ""|0.0.0.0) host=127.0.0.1 ;;
+        esac
+        while IFS= read -r entry; do
+            [ -n "${entry}" ] || continue
+            var="${entry%%:*}"
+            label="${entry#*:}"
+            port="$(_containers_kv_get "${env}" "${var}")"
+            [ -n "${port}" ] || continue
+            if [ "${label}" = "web" ]; then
+                _containers_info_line "${label}" "http://${host}:${port}/"
+            else
+                _containers_info_line "${label}" "${host}:${port}"
+            fi
+        done <<EOT
+$(_containers_words "${labels}")
+EOT
+    elif [ -f "${env}" ]; then
+        while IFS= read -r entry; do
+            _containers_info_line ports "${entry}"
+        done <<EOT
+$(grep -E '^[A-Za-z_][A-Za-z0-9_]*_PORT=' "${env}" 2>/dev/null)
+EOT
+    fi
+
+    login_vars="$(_containers_kv_get "${rec}" LOGIN_VARS)"
+    secret_vars="$(_containers_kv_get "${rec}" SECRET_VARS)"
+    login_text=""
+    while IFS= read -r var; do
+        [ -n "${var}" ] || continue
+        value="$(_containers_kv_get "${env}" "${var}")"
+        [ -n "${value}" ] || continue
+        login_text="${login_text}${login_text:+, }${value}"
+    done <<EOT
+$(_containers_words "${login_vars}")
+EOT
+    while IFS= read -r var; do
+        [ -n "${var}" ] || continue
+        login_text="${login_text}${login_text:+; }password: ${var} in ${env}"
+    done <<EOT
+$(_containers_words "${secret_vars}")
+EOT
+    _containers_info_line login "${login_text}"
+
+    timeout_text="$(_containers_kv_get "${rec}" STOP_TIMEOUT)"
+    if [ -n "${timeout_text}" ]; then
+        timeout_text="${timeout_text}s"
+    else
+        timeout_text="compose's default (10s)"
+    fi
+    _containers_info_line "stop timeout" "${timeout_text}"
+    requires="$(_containers_kv_get "${rec}" REQUIRES)"
+    _containers_info_line needs "${requires}"
+    size="$(du -sh "$(_containers_abs_dir "${dir}")" 2>/dev/null | cut -f1)"
+    _containers_info_line size "${size}"
+    volumes="$(_containers_stack_volumes "${name}" | awk 'NF { printf "%s%s", sep, $1; sep = ", " }')"
+    _containers_info_line volumes "${volumes:-none}"
+}
+
+stack-edit() {
+    local name="" which="" dir compose_file override files file abs editor was600 before after picked_line
+    case "${1:-}" in
+        -h|--help)
+            _containers_usage "Usage: stack-edit [<name>] [compose|env|override]" \
+                "Opens one of the stack's files in your editor (VISUAL, then EDITOR, then nano, vim or vi)," \
+                "then checks the stack with compose config and offers another edit when compose can't read it." \
+                "With more than the compose file, asks which file. Changes apply at the next stack-up." \
+                "An editor that returns at once (code without --wait) makes the check run before you save." \
+                "With one stack, the name can be left out."
+            return 0
+            ;;
+        compose|env|override)
+            # A file word, unless a stack has that name.
+            if [ -d "$(_containers_stacks_root)/$1" ]; then
+                name="$1"
+                shift
+            fi
+            ;;
+        ""|-*) ;;
+        *) name="$1"; shift ;;
+    esac
+    case "${1:-}" in
+        "") ;;
+        compose|env|override) which="$1"; shift ;;
+        *)
+            log_error "stacks: stack-edit: '$1' isn't a file to edit (compose, env or override)"
             return 2
             ;;
     esac
+    if [ "$#" -gt 0 ]; then
+        log_error "stacks: stack-edit: too many arguments ('$1')"
+        return 2
+    fi
+    name="$(_containers_stack_resolve stack-edit "${name}")" || return $?
     dir="$(_containers_stack_dir "${name}")" || return 1
-    _containers_abs_dir "${dir}"
+    compose_file="$(_containers_stack_file_of "${name}")" || return 1
+    override="$(_containers_override_file_in "${dir}" "${compose_file}")" || override=""
+
+    case "${which}" in
+        compose) file="${compose_file}" ;;
+        env) file=.env ;;
+        override)
+            file="${override}"
+            if [ -z "${file}" ]; then
+                log_error "stacks: ${name}: no override file in ${dir} (compose.override.yaml beside the compose file)"
+                return 1
+            fi
+            ;;
+        *) file="" ;;
+    esac
+    if [ -n "${file}" ] && [ ! -f "${dir}/${file}" ]; then
+        log_error "stacks: ${name}: no ${file} in ${dir}"
+        return 1
+    fi
+    if ! _wb_have_tty; then
+        log_error "stacks: stack-edit needs a terminal"
+        return 1
+    fi
+    if ! editor="$(_containers_editor)"; then
+        log_error "stacks: no editor found; set EDITOR (for example, EDITOR=nano)"
+        return 1
+    fi
+    if [ -z "${file}" ]; then
+        files="${compose_file}"
+        if [ -f "${dir}/.env" ]; then
+            files="${files}
+.env"
+        fi
+        if [ -n "${override}" ]; then
+            files="${files}
+${override}"
+        fi
+        if [ "${files}" = "${compose_file}" ]; then
+            file="${compose_file}"
+        else
+            picked_line="$(_containers_choose "Edit which file of ${name}?" "${files}")" || return 2
+            file="${picked_line}"
+        fi
+    fi
+
+    abs="${dir}/${file}"
+    was600=""
+    if [ -n "$(command find "${abs}" -perm 600 2>/dev/null)" ]; then
+        was600=1
+    fi
+    before="$(cksum < "${abs}")"
+    while :; do
+        _containers_run_editor "${editor}" "${abs}"
+        after="$(cksum < "${abs}")"
+        if [ "${after}" = "${before}" ]; then
+            printf 'stacks: %s: no changes\n' "${name}"
+            return 0
+        fi
+        if [ -n "${was600}" ] && [ -z "$(command find "${abs}" -perm 600 2>/dev/null)" ]; then
+            chmod 600 "${abs}" && printf 'stacks: %s: %s is mode 600 again\n' "${name}" "${file}"
+        fi
+        if _containers_stack_run "${name}" config >/dev/null; then
+            break
+        fi
+        if ! _containers_yes_default "Edit again? [Y/n] "; then
+            log_warn "stacks: ${name}: compose can't read the stack as it is; stack-up will fail until it's fixed"
+            return 1
+        fi
+    done
+    if _containers_stack_running "${name}"; then
+        printf 'stacks: %s: running; the change applies at the next start: stack-down %s && stack-up %s\n' "${name}" "${name}" "${name}"
+    fi
+    return 0
 }
 
 stack-rm() {
@@ -1123,8 +1970,10 @@ stack-rm() {
                 ;;
         esac
     done
+    # Always the name, even with one stack: stack-rm never picks one.
     if [ -z "${name}" ]; then
-        _containers_usage "Usage: stack-rm <name> [--purge]"
+        _containers_usage "Usage: stack-rm <name> [--purge]" >&2
+        printf 'Stacks: %s\n' "$(_containers_stack_names | tr '\n' ' ' | sed 's/ $//')" >&2
         return 2
     fi
     if ! _containers_stack_name_ok "${name}"; then
@@ -1229,4 +2078,183 @@ ${volumes}
 EOF
         fi
     fi
+}
+
+# _containers_help_overview — stack-help with no topic.
+_containers_help_overview() {
+    printf 'Stacks: compose projects kept one per folder, under %s.\n\n' "$(_containers_stacks_root)"
+    _containers_help_commands
+    command cat <<'EOT'
+
+With one stack, the name can be left out; with several, you're asked which.
+stack-rm always needs the name. Tab completes stack names, templates and
+options.
+
+More:  stack-help import      bring your own compose project in
+       stack-help templates   what each template needs and gives you
+       stack-help <command>   one command's options
+       stack-help --full      the full guide
+EOT
+}
+
+# _containers_help_commands — the overview's command table.
+_containers_help_commands() {
+    command cat <<'EOT'
+  stack-new [<template>]           create a stack from a template
+  stack-import <folder|file>       bring a compose project you already have in
+  stack-list                       every stack: where it came from, whether it runs
+  stack-info [<name>]              its folder, ports, login, size and volumes
+  stack-up [<name>]                start it (compose up -d)
+  stack-down [<name>]              stop it, giving it its stop timeout
+  stack-logs [<name>] [-f]         its logs
+  stack-edit [<name>] [compose|env|override]
+                                   edit its files, then check them
+  stack-compose [<name>] <args>    any other compose command, for the stack
+  stack-path [<name>]              print its folder: cd "$(stack-path win11)"
+  stack-rm <name> [--purge]        forget it; --purge deletes its folder
+  stack-help [<topic>]             this help
+EOT
+}
+
+# _containers_help_import — stack-help import.
+_containers_help_import() {
+    command cat <<'EOT'
+Importing your own compose project
+
+1. Look first:   stack-import ~/src/myapp --dry-run
+   Shows the stack's name, the compose file, how it would be imported, the
+   stop timeout and any named volumes. Nothing changes.
+
+2. Import it:    stack-import ~/src/myapp
+   On a terminal it asks how:
+     link   leave the files where they are; the stack points at them
+     move   move the folder into the stacks folder
+     copy   copy it there and leave the original
+   then shows the summary and asks before doing anything.
+   --link, --move or --copy answers the first question; --yes the second.
+
+3. Use it:       stack-up myapp
+                 stack-logs myapp -f
+                 stack-info myapp
+                 stack-edit myapp
+
+Good to know
+  - The name comes from the compose file's name:, else the folder's name.
+    --name chooses another. The compose project name is kept either way,
+    because named volumes are keyed by it.
+  - --move and --copy refuse while the project is running: stop it first.
+  - A lone compose file is copied with any .env beside it. If it uses other
+    files beside it, import the folder instead.
+  - Named volumes stay in the engine's storage, not in the stack folder.
+    stack-rm --purge leaves them, and says how to remove them.
+  - stack-down waits as long as the compose file's stop_grace_period, so a
+    VM can shut down cleanly. --stop-timeout <seconds> sets another time.
+    With neither, compose waits 10 seconds.
+  - compose.override.yaml beside the compose file is used too.
+  - The stack's .env wins over variables exported in your shell.
+EOT
+}
+
+# _containers_help_template <template> — one template's block.
+_containers_help_template() {
+    local conf aliases requires ports entry labels
+    conf="$(_containers_stacks_templates_dir)/$1/template.conf"
+    aliases="$(_containers_kv_get "${conf}" ALIASES)"
+    requires="$(_containers_kv_get "${conf}" REQUIRES)"
+    ports="$(_containers_kv_get "${conf}" PORTS)"
+    labels=""
+    while IFS= read -r entry; do
+        [ -n "${entry}" ] || continue
+        labels="${labels}${labels:+, }${entry##*:}"
+    done <<EOT
+$(_containers_words "${ports}")
+EOT
+    if [ -n "${aliases}" ]; then
+        printf '%s (also: %s)\n' "$1" "$(printf '%s' "${aliases}" | sed 's/  */, /g')"
+    else
+        printf '%s\n' "$1"
+    fi
+    printf '  %s\n' "$(_containers_kv_get "${conf}" DESCRIPTION)"
+    printf '  %-9s %s\n' needs "${requires:-nothing beyond compose}"
+    if [ -n "${labels}" ]; then
+        printf '  %-9s %s\n' ports "${labels}"
+    fi
+    if [ -n "$(_containers_kv_get "${conf}" LOGIN_VARS)$(_containers_kv_get "${conf}" SECRET_VARS)" ]; then
+        printf '  %-9s %s\n' login "stack-new sets a user and a random password in the stack's .env"
+    fi
+    if [ -n "$(_containers_kv_get "${conf}" ACCEPT)" ]; then
+        printf '  %-9s %s\n' licence "must be accepted when the stack is created (--accept without a terminal)"
+    fi
+    printf '  stack-help templates %s for setup and access\n' "$1"
+}
+
+stack-help() {
+    local topic="" full="" extra="" t first=1 tname
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            -h|--help)
+                _containers_usage "Usage: stack-help [<topic>|<command>] [--full]" \
+                    "Topics: import, templates [<template>], commands. <command> is any stack command." \
+                    "--full shows the full guide (wb module docs containers stacks)."
+                return 0
+                ;;
+            --full) full=1; shift ;;
+            *)
+                if [ -z "${topic}" ]; then
+                    topic="$1"
+                elif [ -z "${extra}" ]; then
+                    extra="$1"
+                else
+                    log_error "stacks: stack-help: too many arguments ('$1')"
+                    return 2
+                fi
+                shift
+                ;;
+        esac
+    done
+    if [ -n "${full}" ]; then
+        if command -v wb >/dev/null 2>&1; then
+            wb module docs containers stacks
+            return
+        fi
+        printf 'The full guide: %s\n' "$(builtin cd -- "${_containers_stacks_lib_dir}/.." >/dev/null 2>&1 && pwd)/docs/stacks.md"
+        return 0
+    fi
+    case "${topic}" in
+        "") _containers_help_overview ;;
+        import) _containers_help_import ;;
+        commands) _containers_help_commands ;;
+        templates)
+            if [ -n "${extra}" ]; then
+                if ! tname="$(_containers_template_resolve "${extra}")"; then
+                    log_error "stacks: no template '${extra}'. Templates:"
+                    _containers_templates_list >&2
+                    return 2
+                fi
+                _containers_help_template "${tname}"
+                if [ -f "$(_containers_stacks_templates_dir)/${tname}/help.txt" ]; then
+                    printf '\n'
+                    command cat "$(_containers_stacks_templates_dir)/${tname}/help.txt"
+                fi
+                return 0
+            fi
+            while IFS= read -r t; do
+                [ -n "${t}" ] || continue
+                [ -n "${first}" ] || printf '\n'
+                first=""
+                _containers_help_template "${t}"
+            done <<EOT
+$(_containers_template_names)
+EOT
+            ;;
+        new|list|info|up|down|logs|edit|compose|path|rm|help|stack-new|stack-import|stack-list|stack-info|stack-up|stack-down|stack-logs|stack-edit|stack-compose|stack-path|stack-rm|stack-help)
+            t="stack-${topic#stack-}"
+            "${t}" --help
+            ;;
+        *)
+            log_error "stacks: no help on '${topic}'"
+            log_error "stacks: topics: import, templates [<template>], commands, or a command (up, stack-up, ...)"
+            return 2
+            ;;
+    esac
 }

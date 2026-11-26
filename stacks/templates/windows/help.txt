@@ -1,0 +1,22 @@
+Windows (dockur/windows)
+
+First start
+  stack-up <name> downloads Windows from Microsoft (several GB) and installs
+  it without asking anything. Follow it with: stack-logs <name> -f
+  Windows is ready when the web viewer shows the desktop.
+
+Getting in
+  web viewer  http://127.0.0.1:<web port>/  best while Windows installs
+  RDP         127.0.0.1:<rdp port>, as the user and password in the stack's
+              .env (GNOME Connections, Remmina or FreeRDP)
+  stack-info <name> shows both ports, the user, and where the password is.
+
+Files
+  The stack's shared/ folder shows in Windows as "Shared" on the desktop,
+  and as drive Z:.
+
+Settings
+  stack-edit <name> env: WINDOWS_RAM_SIZE, WINDOWS_CPU_CORES,
+  WINDOWS_DISK_SIZE, WINDOWS_VERSION. They apply at the next stack-up.
+  WINDOWS_VERSION, WINDOWS_USERNAME and WINDOWS_PASSWORD only apply when
+  Windows is first installed.

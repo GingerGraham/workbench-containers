@@ -4,6 +4,52 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **Tab completion for every stack command**, in bash and zsh: stack names,
+  templates (with descriptions in zsh), `stack-edit`'s files, compose
+  commands for `stack-compose`, file names for `stack-import`, and every
+  option. It needs a workbench-core with Core API 1.13.
+- **The name can be left out** of `stack-up`, `stack-down`, `stack-logs`,
+  `stack-path`, `stack-info`, `stack-edit` and `stack-compose`: with one
+  stack it's used, and with several you choose from a numbered list.
+  `stack-rm` still needs the name.
+- **`stack-info`**: a stack's folder, origin, state, ports and URLs, login,
+  stop timeout, requirements, size and named volumes.
+- **`stack-edit`**: opens the stack's compose file, `.env` or override file
+  in your editor (`VISUAL`, `EDITOR`, then nano/vim/vi), checks the result
+  with compose, and offers another edit if compose can't read it.
+- **`stack-help`**: an overview, `stack-help import` (a walkthrough),
+  `stack-help templates`, help on any command, and `stack-help --full` for
+  the full guide.
+- **`stack-new`** offers a template menu when you don't name one, accepts
+  short names (`stack-new win`), and suggests a free stack name
+  (`windows-2`) instead of failing.
+- **`stack-import`** asks whether to link, move or copy; shows what it is
+  about to do and asks first (`--yes` skips that, `--dry-run` only shows);
+  and gives a stack the compose file's `stop_grace_period` as its stop
+  timeout (`--stop-timeout` sets another), so `stack-down` doesn't kill a VM
+  after 10 seconds.
+- **Template keys** for the coming macOS template: `ALIASES`, `REQUIRES`
+  lists (`kvm avx2`), `ACCEPT` for licences (with `--accept`),
+  `ACCEPT_VENDOR_CHECK`, `DISK_VAR` (a free-space warning) and a
+  `help.txt` per template.
+- **Docs**: `docs/stacks.md`, the full guide, and `docs/stack-templates.md`,
+  the template contract. The README's Stacks section is now a short
+  overview.
+
+### Changed
+
+- **Breaking: `stack-add` is now `stack-import`.** There's no old name to
+  fall back on; use `stack-import` in scripts.
+
+### Fixed
+
+- **Compose override files are used.** The stack commands pass `-f` to
+  compose, which stops compose reading `compose.override.yaml` (or
+  `docker-compose.override.yml`) on its own, so an imported project's
+  override file was ignored. It's now passed too.
+
 ## [0.6.1] - 2026-11-25
 
 ### Fixed
