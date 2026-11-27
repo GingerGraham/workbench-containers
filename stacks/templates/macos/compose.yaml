@@ -1,0 +1,44 @@
+# compose.yaml — workbench-containers stack template: macOS in a KVM virtual
+# machine (dockur/macos). Copied once by stack-new; yours to edit
+# afterwards. Change settings in .env beside this file, not here.
+#
+# Configuration options: every setting dockur/macos accepts (display, disk,
+# CPU model, networking, GPU, audio and more) is documented at
+#   https://github.com/dockur/macos
+# Add one under environment: below; to make it a stack setting, give it a
+# MACOS_* variable in .env, as the ones below do.
+#
+# Why it differs from dockur's README example (workbench-core D129):
+#   - NETWORK user, no /dev/net/tun, no NET_ADMIN: the same networking on
+#     every host and engine, with fewer privileges. SELinux hosts deny the
+#     tun device to containers anyway.
+#   - ports on ${MACOS_BIND}, 127.0.0.1 unless you change it: the web viewer
+#     and VNC have no password of their own.
+#   - no container_name, so several macOS stacks can run side by side.
+#   - ./storage and ./shared instead of ./macos, and :Z relabels the mounts
+#     for SELinux; hosts without SELinux ignore it.
+#   - unless-stopped: a VM you stopped stays stopped.
+#   - settings are MACOS_* in .env, so a generic variable exported in your
+#     shell (VERSION, DISK_SIZE) can't stand in for one. The names on the
+#     left of environment: are dockur's own.
+
+services:
+  macos:
+    image: docker.io/dockurr/macos
+    environment:
+      VERSION: ${MACOS_VERSION:-15}
+      RAM_SIZE: ${MACOS_RAM_SIZE:-4G}
+      CPU_CORES: ${MACOS_CPU_CORES:-2}
+      DISK_SIZE: ${MACOS_DISK_SIZE:-64G}
+      NETWORK: ${MACOS_NETWORK:-user}
+    devices:
+      - /dev/kvm
+    ports:
+      - ${MACOS_BIND:-127.0.0.1}:${MACOS_WEB_PORT:-8006}:8006
+      - ${MACOS_BIND:-127.0.0.1}:${MACOS_VNC_PORT:-5900}:5900/tcp
+      - ${MACOS_BIND:-127.0.0.1}:${MACOS_VNC_PORT:-5900}:5900/udp
+    volumes:
+      - ./storage:/storage:Z
+      - ./shared:/shared:Z
+    restart: unless-stopped
+    stop_grace_period: 2m

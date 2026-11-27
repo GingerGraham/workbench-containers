@@ -4,6 +4,15 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+### Added
+
+- **A macOS template** (dockur/macos): `stack-new macos`, or `stack-new mac`.
+  It needs KVM and a CPU with AVX2, and asks you to accept Apple's licence
+  before it creates anything (`--accept` without a terminal). You install
+  macOS yourself in the web viewer; `stack-help templates macos` walks
+  through it. Reach it through the web viewer or VNC. The compose file
+  points at https://github.com/dockur/macos for every other option.
+
 ## [0.7.0] - 2026-11-26
 
 ### Added

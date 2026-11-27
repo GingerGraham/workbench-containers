@@ -33,7 +33,8 @@ wb add containers
 - Compose stacks (`stack-new`, `stack-import`, `stack-list`, `stack-info`,
   `stack-up`, `stack-down`, `stack-logs`, `stack-edit`, `stack-compose`,
   `stack-path`, `stack-rm`, `stack-help`): one folder per compose project
-  under `~/.local/share/stacks/`, with a dockur/windows template. See
+  under `~/.local/share/stacks/`, with dockur/windows and dockur/macos
+  templates. See
   [Stacks](#stacks).
 
 ## Docker and Podman installers
@@ -83,6 +84,7 @@ place, and a stack runs the same from `stack-up`, from a hand-run
 
 ```sh
 stack-new windows          # a Windows VM from a template (stack-new alone lists them)
+stack-new macos            # a macOS VM; asks you to accept Apple's licence first
 stack-up                   # with one stack, the name can be left out
 stack-import ~/src/myapp   # bring your own compose project in
 stack-help                 # every command; stack-help import walks through importing

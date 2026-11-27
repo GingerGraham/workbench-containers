@@ -355,7 +355,82 @@ Requirements and choices made by the template:
 
 ### macOS
 
-Planned: see brief B.
+[dockur/macos](https://github.com/dockur/macos) stack: macOS in a KVM
+virtual machine. Every option dockur/macos accepts, beyond the settings
+below, is documented in that repository; `compose.yaml` and `.env` point
+there too.
+
+```sh
+stack-new macos            # or: stack-new mac
+```
+
+**The licence.** macOS is Apple's software, and Apple's licence allows it
+only on Apple-branded hardware. `stack-new` prints that notice and asks you
+to accept it before it creates anything; without a terminal it needs
+`--accept`. It also prints the maker the machine reports
+(`/sys/class/dmi/id/sys_vendor`) and whether that's `Apple Inc.`, as a fact:
+it doesn't refuse on a mismatch. The record's `ACCEPTED` holds the time you
+accepted.
+
+**First start.** `stack-up <name>` downloads macOS recovery from Apple. Open
+the web viewer and wait: a progress bar shows while the rest of the
+installer downloads, then the recovery menu appears. Unlike Windows, you
+install macOS by hand:
+
+1. **Disk Utility**: select the largest `Apple Inc. VirtIO Block Media`
+   disk, click **Erase** (APFS, any name), and close Disk Utility.
+2. **Reinstall macOS**, and install it on the disk you just erased.
+3. Choose region, language and keyboard.
+4. **Migration Assistant**: *Not now*. **Apple ID**: *Set Up Later*, then
+   *Skip*.
+5. **Create a Computer Account**: the user and password are yours to
+   choose. The stack doesn't set them, so `.env` has no login or password.
+
+**Getting in.**
+
+- Web viewer: `http://127.0.0.1:<web port>/`.
+- VNC: `127.0.0.1:<vnc port>`, with GNOME Connections, Remmina or TigerVNC.
+- `stack-info <name>` shows both ports.
+
+The first macOS stack gets ports 8006 and 5900; each further stack, and a
+macOS stack beside a Windows one, gets the next free ones.
+
+**Files.** The stack's `shared/` folder is shared with macOS. In macOS's
+Terminal, run `sudo -S mount_9p shared`, then open Finder's **Go >
+Computer**. The VM disk is in `storage/`.
+
+**Settings.** Change them with `stack-edit <name> env`. They apply at the
+next `stack-up`.
+
+| Setting | Default | When it applies |
+|---|---|---|
+| `MACOS_VERSION` | `15` (Sequoia) | First install only. Other values: `14` (Sonoma), `13` (Ventura), `12` (Monterey), `11` (Big Sur). `26` (Tahoe) works but runs very slowly. |
+| `MACOS_RAM_SIZE` | `4G` | Next start. On AMD hosts, keep it at `8G` or less until macOS is installed. |
+| `MACOS_CPU_CORES` | `2` | Next start. |
+| `MACOS_DISK_SIZE` | `64G` | Next start. Raising it grows the disk; then, in macOS, run `diskutil repairDisk disk2` and `diskutil apfs resizeContainer disk3 0`. |
+| `MACOS_NETWORK` | `user` | Next start. `user` is passt user-mode networking, with no extra privileges. |
+| `MACOS_BIND` | `127.0.0.1` | Next start. The address the ports are published on. |
+| `MACOS_WEB_PORT` | `8006`, or the next free one | Next start. |
+| `MACOS_VNC_PORT` | `5900`, or the next free one | Next start. |
+
+Requirements and choices made by the template:
+
+- **KVM and AVX2.** It needs a readable and writable `/dev/kvm`, and a CPU
+  with AVX2 (Intel Haswell or AMD Zen, or newer). `stack-new` and `stack-up`
+  refuse without either.
+- **Disk space.** `stack-new` warns when the stacks folder has less free
+  space than `MACOS_DISK_SIZE`. dockur/macos asks for at least 32 GB free.
+- **Networking.** `NETWORK: user`, with no `/dev/net/tun` and no
+  `NET_ADMIN`, as for Windows. Forwarding another port into macOS (SSH)
+  takes a `ports:` entry and a `USER_PORTS` entry under `environment:` in
+  `compose.yaml`.
+- **Access.** The web viewer and VNC have no password of their own, which is
+  why the ports are on `127.0.0.1`. `stack-up` warns when `MACOS_BIND` isn't
+  a loopback address.
+- **Stopping.** The stack's stop timeout is 120 seconds, so `stack-down`
+  gives macOS two minutes to shut down.
+- **Pinning.** The image is `docker.io/dockurr/macos`, unpinned. To pin it,
+  put a tag on `image:` in the stack's `compose.yaml`.
 
 ## Importing your own project
 

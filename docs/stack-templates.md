@@ -125,6 +125,9 @@ read them.
 - Nothing is created before the answer, the stacks folder included.
 - The record's `ACCEPTED` holds the time.
 
+The macOS template is the example: its `ACCEPT` says Apple's licence allows
+macOS only on Apple-branded hardware, and `ACCEPT_VENDOR_CHECK=Apple Inc.`
+
 With `ACCEPT_VENDOR_CHECK`, `stack-new` prints one line before the question,
 reporting a fact and nothing more:
 
