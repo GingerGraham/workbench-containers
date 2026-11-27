@@ -1,0 +1,30 @@
+macOS (dockur/macos)
+
+First start
+  stack-up <name> downloads macOS recovery from Apple. Open the web viewer
+  and wait: a progress bar shows while the rest of the installer downloads,
+  then the recovery menu appears. Follow it with: stack-logs <name> -f
+  Then, in the web viewer:
+    1. Disk Utility: select the largest "Apple Inc. VirtIO Block Media"
+       disk, click Erase (APFS, any name), and close Disk Utility.
+    2. Reinstall macOS, and install it on the disk you just erased.
+    3. Choose region, language and keyboard.
+    4. Migration Assistant: Not now. Apple ID: Set Up Later, then Skip.
+    5. Create a Computer Account: the user and password are yours to choose;
+       this stack doesn't set them.
+
+Getting in
+  web viewer  http://127.0.0.1:<web port>/
+  VNC         127.0.0.1:<vnc port> (GNOME Connections, Remmina or TigerVNC)
+  stack-info <name> shows both ports.
+
+Files
+  The stack's shared/ folder is shared with macOS. In macOS's Terminal run
+  sudo -S mount_9p shared, then open Finder's Go > Computer.
+
+Settings
+  stack-edit <name> env: MACOS_RAM_SIZE, MACOS_CPU_CORES, MACOS_DISK_SIZE,
+  MACOS_VERSION. They apply at the next stack-up; MACOS_VERSION only when
+  macOS is first installed. On AMD hosts, keep MACOS_RAM_SIZE at 8G or less
+  until macOS is installed.
+  Every other option: https://github.com/dockur/macos

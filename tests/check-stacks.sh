@@ -21,6 +21,7 @@
 #   22 the one-stack rule    27 ACCEPT                 32 stack-edit
 #   23 stack-rm, no name     28 DISK_VAR               33 stack-help
 #   24 stack-compose         29 stack-import
+#   35 the macOS template (17 also checks its files)
 # (34, the docs, is tests/check-stacks-docs.sh.)
 #
 # Each fake records "<name>|<$PWD>|<argv>" to a calls file. Control files in
@@ -684,7 +685,8 @@ check "20 an empty root: nothing, status 0, nothing on stderr" '[ "${rc}" = 0 ] 
 run stack-new windows --name win11
 src "${HOME}/src/gitea"; run stack-import "${HOME}/src/gitea"
 comp stack-new ""
-check "20 stack-new \"\": every template folder with its DESCRIPTION, no aliases" '[ "${out}" = "windows${TAB}Windows 11 in a KVM virtual machine (dockur/windows)" ]'
+check "20 stack-new \"\": every template folder with its DESCRIPTION, no aliases" '[ "${out}" = "macos${TAB}macOS in a KVM virtual machine (dockur/macos)
+windows${TAB}Windows 11 in a KVM virtual machine (dockur/windows)" ]'
 comp stack-new --
 check "20 stack-new --: its options" '[ "$(lines "${out}")" = "--name --list --accept --help" ]'
 comp stack-new --name ""
@@ -752,9 +754,9 @@ run stack-compose ps
 check "24 two stacks, no terminal, stack-compose ps: status 2" '[ "${rc}" = 2 ]'
 
 # ── 25. stack-new ────────────────────────────────────────────────────────────
-fresh; : > "${CTL}/tty"; printf '1\n\n' > "${CTL}/answers"
+fresh; : > "${CTL}/tty"; printf '2\n\n' > "${CTL}/answers"
 run stack-new
-check "25 no template on a terminal, answer 1: the first template" '[ "${rc}" = 0 ] && [ -f "${ROOT}/windows/compose.yaml" ] && has "$(cat "${CTL}/tty.out")" "Which template?"'
+check "25 no template on a terminal: a menu of both templates, answer 2: windows" '[ "${rc}" = 0 ] && [ -f "${ROOT}/windows/compose.yaml" ] && has "$(cat "${CTL}/tty.out")" "Which template?" && has "$(cat "${CTL}/tty.out")" "1) macos" && has "$(cat "${CTL}/tty.out")" "2) windows"'
 rm -f "${CTL}/tty"
 run stack-new win
 check "25 stack-new win: windows taken, no terminal → windows-2, with the naming line" '[ "${rc}" = 0 ] && grep -qx "ORIGIN=template:windows" "${ROOT}/.wb/windows-2.conf" && has "${out}" "naming it windows-2 (--name to choose)"'
@@ -912,6 +914,27 @@ run stack-help --full
 check "33 --full runs wb module docs containers stacks" 'has "$(calls)" "wb|" && has "$(calls)" "|module docs containers stacks"'
 run stack-help bogus
 check "33 stack-help bogus: status 2" '[ "${rc}" = 2 ] && has "${out}" "no help on '"'"'bogus'"'"'"'
+
+# ── 35. the macOS template, beside a Windows stack ───────────────────────────
+export _CONTAINERS_CPUINFO="${HOME}/cpuinfo-mac" _CONTAINERS_DMI_VENDOR_FILE="${HOME}/vendor-mac"
+printf 'flags\t\t: fpu sse2 avx2\n' > "${_CONTAINERS_CPUINFO}"
+printf 'Apple Inc.\n' > "${_CONTAINERS_DMI_VENDOR_FILE}"
+fresh; run stack-new windows --name win11
+run stack-new mac
+check "35 stack-new mac, no terminal, no --accept: refused, nothing created" '[ "${rc}" = 1 ] && has "${out}" "needs its licence accepted" && [ ! -e "${ROOT}/macos" ] && [ ! -e "${ROOT}/.wb/macos.conf" ]'
+run stack-new mac --accept
+check "35 stack-new mac --accept: the macos template, its licence text and the vendor line" '[ "${rc}" = 0 ] && [ -f "${ROOT}/macos/compose.yaml" ] && grep -qx "ORIGIN=template:macos" "${ROOT}/.wb/macos.conf" && has "${out}" "Apple-branded hardware" && has "${out}" "That matches Apple Inc."'
+check "35 the record: REQUIRES, PORT_LABELS, empty LOGIN_VARS and SECRET_VARS, ACCEPTED, STOP_TIMEOUT" 'REC="${ROOT}/.wb/macos.conf"; grep -qx "REQUIRES=kvm avx2" "${REC}" && grep -qx "PORT_LABELS=MACOS_WEB_PORT:web MACOS_VNC_PORT:vnc" "${REC}" && grep -qx "LOGIN_VARS=" "${REC}" && grep -qx "SECRET_VARS=" "${REC}" && grep -qE "^ACCEPTED=[0-9]{4}-[0-9]{2}-[0-9]{2}T" "${REC}" && grep -qx "STOP_TIMEOUT=120" "${REC}"'
+check "35 .env: web port 8007, after the Windows stack, VNC 5900, loopback, mode 600" 'ENV="${ROOT}/macos/.env"; grep -qx "MACOS_WEB_PORT=8007" "${ENV}" && grep -qx "MACOS_VNC_PORT=5900" "${ENV}" && grep -qx "MACOS_BIND=127.0.0.1" "${ENV}" && [ -n "$(find "${ENV}" -perm 600)" ]'
+check "35 the closing lines point at the macOS help" 'has "${out}" "stack-help templates macos"'
+run stack-info macos
+check "35 stack-info macos: the web URL and the VNC address, no login line" '[ "${rc}" = 0 ] && has "${out}" "http://127.0.0.1:8007/" && has "${out}" "127.0.0.1:5900" && ! has "${out}" "login "'
+run stack-help templates mac
+check "35 stack-help templates mac: the macOS block and its help.txt" 'has "${out}" "macOS (dockur/macos)" && has "${out}" "Disk Utility" && has "${out}" "https://github.com/dockur/macos"'
+printf 'flags\t\t: fpu sse2\n' > "${_CONTAINERS_CPUINFO}"
+run stack-new macos --accept --name mac2
+check "35 no AVX2: refused, nothing created" '[ "${rc}" = 1 ] && has "${out}" "AVX2" && [ ! -e "${ROOT}/mac2" ]'
+unset _CONTAINERS_CPUINFO _CONTAINERS_DMI_VENDOR_FILE
 EOF
 
 # ── D132 cases 26–28: test-only templates in a copy of the module ───────────
@@ -1181,6 +1204,17 @@ grep -qx 'ALIASES=win' "${WIN_CONF}" && grep -qx 'DISK_VAR=WINDOWS_DISK_SIZE' "$
 [[ -s "${TEMPLATES}/windows/help.txt" ]] && ok "17 windows: help.txt exists" || fail "17 windows: help.txt is missing"
 grep -q '^WINDOWS_DISK_SIZE=' "${TEMPLATES}/windows/env.default" \
     && ok "17 windows: DISK_VAR names a variable env.default sets" || fail "17 windows: env.default has no WINDOWS_DISK_SIZE"
+# 17: the macOS template's keys, help.txt, and its pointer to dockur/macos.
+MAC_CONF="${TEMPLATES}/macos/template.conf"
+grep -qx 'ALIASES=mac' "${MAC_CONF}" && grep -qx 'REQUIRES=kvm avx2' "${MAC_CONF}" && grep -qx 'DISK_VAR=MACOS_DISK_SIZE' "${MAC_CONF}" \
+    && ok "17 macos: ALIASES=mac, REQUIRES=kvm avx2, DISK_VAR=MACOS_DISK_SIZE" || fail "17 macos: ALIASES, REQUIRES or DISK_VAR not as expected"
+grep -qE '^ACCEPT=.+' "${MAC_CONF}" && grep -qx 'ACCEPT_VENDOR_CHECK=Apple Inc.' "${MAC_CONF}" \
+    && ok "17 macos: a licence to accept, checked against Apple Inc." || fail "17 macos: ACCEPT or ACCEPT_VENDOR_CHECK missing"
+[[ -s "${TEMPLATES}/macos/help.txt" ]] && ok "17 macos: help.txt exists" || fail "17 macos: help.txt is missing"
+grep -q '^MACOS_DISK_SIZE=' "${TEMPLATES}/macos/env.default" \
+    && ok "17 macos: DISK_VAR names a variable env.default sets" || fail "17 macos: env.default has no MACOS_DISK_SIZE"
+grep -q '^#.*https://github.com/dockur/macos' "${TEMPLATES}/macos/compose.yaml" \
+    && ok "17 macos: compose.yaml's comment points at https://github.com/dockur/macos" || fail "17 macos: compose.yaml doesn't point at https://github.com/dockur/macos"
 all_aliases="$(cat "${TEMPLATES}"/*/template.conf | grep -E '^ALIASES=' | cut -d= -f2- | tr -s ' ' '\n' | grep -v '^$')"
 bad_aliases=""
 while IFS= read -r a; do
