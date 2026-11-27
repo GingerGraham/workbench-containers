@@ -4,6 +4,8 @@ All notable changes to `workbench-containers` are documented here.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-11-27
+
 ### Added
 
 - **A macOS template** (dockur/macos): `stack-new macos`, or `stack-new mac`.
